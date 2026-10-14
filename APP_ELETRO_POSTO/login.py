@@ -39,6 +39,7 @@ def LoginApp(janela, abrir_cadastro):
             messagebox.showinfo(
                 "Sucesso",
                 "Login realizado com sucesso!"
+                
             )
 
         else:

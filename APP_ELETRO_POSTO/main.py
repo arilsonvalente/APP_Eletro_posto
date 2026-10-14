@@ -1,4 +1,5 @@
 import customtkinter as ctk
+from menu import Menu
 from login import LoginApp
 from cadastro_usuario import cadastrar
 
@@ -17,9 +18,11 @@ def abrir_login():
 def abrir_cadastro():
     cadastrar(janela, abrir_login)
 
+def abrir_menu():
+    Menu(janela, abrir_login)
 
 # Tela inicial
-abrir_login()
+abrir_menu()
 
 # Executar aplicação
 janela.mainloop()
