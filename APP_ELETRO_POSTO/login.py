@@ -2,7 +2,9 @@ import customtkinter as ctk
 from tkinter import messagebox
 
 
-def LoginApp(janela, abrir_cadastro):
+
+
+def LoginApp(janela, abrir_cadastro, abrir_menu):
 
     for widget in janela.winfo_children():
         widget.destroy()
@@ -63,3 +65,11 @@ def LoginApp(janela, abrir_cadastro):
         command=abrir_cadastro
     )
     btn_cadastro.pack(pady=10)
+
+    btn_menu = ctk.CTkButton(
+        frame,
+        text="Tela Inicial",
+        fg_color="gray",
+        command=abrir_menu
+    )
+    btn_menu.pack(pady=10)

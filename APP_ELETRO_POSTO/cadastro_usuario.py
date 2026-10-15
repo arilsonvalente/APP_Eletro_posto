@@ -67,3 +67,5 @@ def cadastrar(janela, voltar_login):
         command=voltar_login
     )
     btn_voltar.pack(pady=10)
+    
+    

@@ -84,7 +84,6 @@ def Menu(janela, abrir_login):
             "Veículos",
             "Estações",
             "Serviços",
-            "Sobre"
         ]
 
         for item in itens_menu:
@@ -332,6 +331,7 @@ def Menu(janela, abrir_login):
                 padx=20,
                 pady=(0, 15)
             )
+
 
     # Monta a interface na ordem correta
     criar_cabecalho(frame)
