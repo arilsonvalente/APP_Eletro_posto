@@ -114,14 +114,17 @@ def _popular_dados_iniciais(cursor, conn):
             VALUES (?, ?, ?, ?, ?)
         """, ("Administrador EletroBel", "admin@eletrobel.com", "admin", senha_admin, "admin"))
 
-    # 2. Estações de Recarga iniciais
-    cursor.execute("SELECT COUNT(*) as total FROM estacoes")
+    # 2. Estações de Recarga iniciais (Belém, Ananindeua e Região Metropolitana)
+    cursor.execute("SELECT COUNT(*) as total FROM estacoes WHERE endereco LIKE '%Belém%' OR endereco LIKE '%Ananindeua%'")
     if cursor.fetchone()[0] == 0:
+        cursor.execute("DELETE FROM estacoes")
         estacoes_iniciais = [
-            ("Estação Central EletroBel", "Av. Principal, 1000 - Centro", 50.0, "CCS2 / Tipo 2", 1.85, "Disponível"),
-            ("Estação Shopping Norte", "Rodovia BR-101, Km 45", 150.0, "CCS2 / CHAdeMO", 2.10, "Disponível"),
-            ("Estação Polo Tecnológico", "Rua da Inovação, 250", 22.0, "Tipo 2", 1.50, "Disponível"),
-            ("Estação Aeroporto Express", "Terminal 2 - Estacionamento VIP", 100.0, "CCS2", 2.30, "Ocupado"),
+            ("Estação EletroBel Doca", "Av. Visconde de Souza Franco (Doca), 500 - Belém, PA", 150.0, "CCS2 / Tipo 2", 1.95, "Disponível"),
+            ("Estação Shopping Bosque Grão-Pará", "Av. Centenário, 1052 - Belém, PA", 60.0, "CCS2", 2.10, "Disponível"),
+            ("Estação Metrópole Ananindeua", "Rodovia BR-316, Km 4 - Coqueiro, Ananindeua, PA", 120.0, "CCS2 / CHAdeMO", 1.90, "Disponível"),
+            ("Estação Cidade Nova", "Av. Arterial 18, 400 - Cidade Nova, Ananindeua, PA", 22.0, "Tipo 2", 1.45, "Disponível"),
+            ("Estação Aeroporto Internacional", "Val-de-Cans - Estacionamento VIP, Belém, PA", 100.0, "CCS2", 2.30, "Ocupado"),
+            ("Estação BRT Augusto Montenegro", "Av. Augusto Montenegro, Km 8 - Parque Verde, Belém, PA", 90.0, "CCS2 / Tipo 2", 1.85, "Disponível"),
         ]
         cursor.executemany("""
             INSERT INTO estacoes (nome, endereco, potencia_kw, tipo_conector, preco_kwh, status)
@@ -240,6 +243,45 @@ def cadastrar_estacao(nome: str, endereco: str, potencia_kw: float, tipo_conecto
             return True, "Estação cadastrada com sucesso!"
     except Exception as e:
         return False, f"Erro ao cadastrar estação: {e}"
+
+
+def buscar_estacoes(cidade: str = None, apenas_rapida: bool = False):
+    """
+    Retorna estações filtradas por cidade (Belém, Ananindeua, Região Metropolitana)
+    e opcionalmente apenas com Carga Rápida (DC >= 50kW).
+    """
+    with conectar() as conn:
+        cursor = conn.cursor()
+        query = "SELECT * FROM estacoes WHERE 1=1"
+        params = []
+
+        if cidade:
+            cidade_lower = cidade.lower()
+            if "belém" in cidade_lower:
+                query += " AND (endereco LIKE ? OR nome LIKE ?)"
+                params.extend(["%Belém%", "%Belém%"])
+            elif "ananindeua" in cidade_lower:
+                query += " AND (endereco LIKE ? OR nome LIKE ?)"
+                params.extend(["%Ananindeua%", "%Ananindeua%"])
+            # Se for 'Região Metropolitana', busca ambas ou não filtra por cidade específica
+
+        if apenas_rapida:
+            query += " AND potencia_kw >= 50.0"
+
+        query += " ORDER BY status ASC, potencia_kw DESC"
+        cursor.execute(query, params)
+        resultados = [dict(row) for row in cursor.fetchall()]
+
+        # Se não encontrou estações com o filtro estrito, retorna as estações gerais com o filtro de velocidade
+        if not resultados and cidade:
+            fallback_query = "SELECT * FROM estacoes"
+            if apenas_rapida:
+                fallback_query += " WHERE potencia_kw >= 50.0"
+            fallback_query += " ORDER BY status ASC, potencia_kw DESC"
+            cursor.execute(fallback_query)
+            resultados = [dict(row) for row in cursor.fetchall()]
+
+        return resultados
 
 
 # =====================================================================

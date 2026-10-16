@@ -22,7 +22,7 @@ def abrir_cadastro():
     cadastrar(janela, abrir_login)
 
 def abrir_menu():
-    Menu(janela, abrir_login)
+    Menu(janela, abrir_login, abrir_cadastro)
 
 # Tela inicial
 abrir_menu()
