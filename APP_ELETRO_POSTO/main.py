@@ -2,12 +2,16 @@ import customtkinter as ctk
 from menu import Menu
 from login import LoginApp
 from cadastro_usuario import cadastrar
+import database
+
+# Inicializa o banco de dados e cria as tabelas caso ainda não existam
+database.inicializar_banco()
 
 # Janela principal
 janela = ctk.CTk()
-janela.title("Sistema de Gestão")
-janela.geometry("1920x1080")
-janela.minsize(650, 450)
+janela.title("EletroBel Postos - Gestão de Mobilidade Elétrica")
+janela.geometry("1100x720")
+janela.minsize(800, 500)
 
 
 # Funções de navegação
@@ -24,4 +28,4 @@ def abrir_menu():
 abrir_menu()
 
 # Executar aplicação
-janela.mainloop()
+janela.mainloop()
