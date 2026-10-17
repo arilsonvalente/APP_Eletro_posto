@@ -218,6 +218,37 @@ def listar_usuarios():
         return [dict(row) for row in cursor.fetchall()]
 
 
+def obter_usuario_por_id(usuario_id: int):
+    """Retorna os dados cadastrais atualizados de um usuário pelo ID."""
+    with conectar() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, nome, email, usuario, tipo, criado_em FROM usuarios WHERE id = ?", (usuario_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def obter_resumo_usuario(usuario_id: int):
+    """Retorna estatísticas do usuário: total de recargas, kWh consumidos, valor investido e qtd de veículos."""
+    with conectar() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT 
+                COUNT(*) as total_recargas,
+                COALESCE(SUM(energia_kwh), 0.0) as total_kwh,
+                COALESCE(SUM(valor_total), 0.0) as total_valor
+            FROM recargas
+            WHERE usuario_id = ?
+        """, (usuario_id,))
+        res = dict(cursor.fetchone() or {"total_recargas": 0, "total_kwh": 0.0, "total_valor": 0.0})
+
+        cursor.execute("SELECT COUNT(*) FROM veiculos WHERE usuario_id = ?", (usuario_id,))
+        row_veic = cursor.fetchone()
+        res["total_veiculos"] = row_veic[0] if row_veic else 0
+
+        return res
+
+
+
 # =====================================================================
 # FUNÇÕES DE ESTAÇÕES
 # =====================================================================

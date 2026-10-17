@@ -14,7 +14,7 @@ COLOR_INPUT_BG = "#182229"
 COLOR_INPUT_BORDER = "#253440"
 
 
-def LoginApp(janela, abrir_cadastro, abrir_menu):
+def LoginApp(janela, abrir_cadastro, abrir_menu, on_login_sucesso=None):
     """Renderiza a tela de login conectada ao banco de dados."""
     for widget in janela.winfo_children():
         widget.destroy()
@@ -130,7 +130,10 @@ def LoginApp(janela, abrir_cadastro, abrir_menu):
                 "Sucesso",
                 f"Login realizado com sucesso!\nBem-vindo(a), {usuario_autenticado['nome']}!"
             )
-            abrir_menu()
+            if on_login_sucesso:
+                on_login_sucesso(usuario_autenticado)
+            else:
+                abrir_menu()
         else:
             messagebox.showerror(
                 "Erro de Login",

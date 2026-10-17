@@ -16,10 +16,10 @@ COLOR_TEXT_MAIN = "#FFFFFF"
 COLOR_TEXT_MUTED = "#8A99AD"
 
 
-def Menu(janela, abrir_login=None, abrir_cadastro=None):
+def Menu(janela, abrir_login=None, abrir_cadastro=None, abrir_perfil=None, usuario_atual=None, fazer_logout=None):
     """
     Renderiza a interface inicial do EletroBel integrada com navegação
-    para telas de login, cadastro e consulta ao banco de dados.
+    para telas de login, cadastro, área do cliente (perfil) e consulta ao banco de dados.
     """
     # Limpa componentes anteriores da janela
     for widget in janela.winfo_children():
@@ -38,7 +38,7 @@ def Menu(janela, abrir_login=None, abrir_cadastro=None):
         else:
             try:
                 from login import LoginApp
-                LoginApp(janela, nav_cadastro, lambda: Menu(janela, nav_login, nav_cadastro))
+                LoginApp(janela, nav_cadastro, lambda: Menu(janela, nav_login, nav_cadastro, nav_perfil, usuario_atual, nav_logout), lambda u: Menu(janela, nav_login, nav_cadastro, nav_perfil, u, nav_logout))
             except Exception as e:
                 messagebox.showinfo("Navegação", f"Tela de Login solicitada. ({e})")
 
@@ -51,6 +51,25 @@ def Menu(janela, abrir_login=None, abrir_cadastro=None):
                 cadastrar(janela, nav_login)
             except Exception as e:
                 messagebox.showinfo("Navegação", f"Tela de Cadastro solicitada. ({e})")
+
+    def nav_perfil():
+        if abrir_perfil:
+            abrir_perfil()
+        else:
+            if usuario_atual:
+                try:
+                    from perfil_usuario import PerfilUsuario
+                    PerfilUsuario(janela, usuario_atual, lambda: Menu(janela, nav_login, nav_cadastro, nav_perfil, usuario_atual, nav_logout), nav_logout)
+                except Exception as e:
+                    messagebox.showinfo("Navegação", f"Perfil solicitado. ({e})")
+            else:
+                nav_login()
+
+    def nav_logout():
+        if fazer_logout:
+            fazer_logout()
+        else:
+            Menu(janela, nav_login, nav_cadastro, nav_perfil, None, None)
 
     # Container com rolagem para adaptação a diferentes tamanhos de tela
     scroll_container = ctk.CTkScrollableFrame(
@@ -133,37 +152,82 @@ def Menu(janela, abrir_login=None, abrir_cadastro=None):
     )
     btn_carros.pack(side="left", padx=4)
 
-    # Botão Cadastre-se
-    btn_cadastro = ctk.CTkButton(
+    # Link Área do Cliente
+    btn_area = ctk.CTkButton(
         actions_frame,
-        text="Cadastre-se",
+        text="Área do Cliente",
         fg_color="transparent",
-        border_color=COLOR_ACCENT,
-        border_width=1.5,
-        hover_color="#113322",
-        text_color=COLOR_ACCENT,
-        corner_radius=20,
-        font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-        width=115,
-        height=34,
-        command=nav_cadastro
+        hover_color="#182330",
+        text_color=COLOR_TEXT_MUTED,
+        font=ctk.CTkFont(family="Segoe UI", size=13),
+        width=120,
+        height=32,
+        command=nav_perfil
     )
-    btn_cadastro.pack(side="left", padx=(15, 8))
+    btn_area.pack(side="left", padx=4)
 
-    # Botão Entrar
-    btn_entrar = ctk.CTkButton(
-        actions_frame,
-        text="Entrar",
-        fg_color=COLOR_ACCENT,
-        hover_color=COLOR_ACCENT_HOVER,
-        text_color="#000000",
-        font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-        corner_radius=20,
-        width=80,
-        height=34,
-        command=nav_login
-    )
-    btn_entrar.pack(side="left")
+    if usuario_atual:
+        primeiro_nome = usuario_atual.get("nome", "Usuário").split()[0]
+        btn_perfil = ctk.CTkButton(
+            actions_frame,
+            text=f"👤 {primeiro_nome}",
+            fg_color="#182A22",
+            hover_color="#203D2F",
+            border_color=COLOR_ACCENT,
+            border_width=1.5,
+            text_color=COLOR_ACCENT,
+            corner_radius=20,
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            height=34,
+            command=nav_perfil
+        )
+        btn_perfil.pack(side="left", padx=(10, 6))
+
+        btn_sair = ctk.CTkButton(
+            actions_frame,
+            text="Sair",
+            fg_color="transparent",
+            hover_color="#331A1D",
+            text_color="#FF6B6B",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            width=50,
+            height=34,
+            command=nav_logout
+        )
+        btn_sair.pack(side="left")
+    else:
+        # Botão Cadastre-se
+        btn_cadastro = ctk.CTkButton(
+            actions_frame,
+            text="Cadastre-se",
+            fg_color="transparent",
+            border_color=COLOR_ACCENT,
+            border_width=1.5,
+            hover_color="#113322",
+            text_color=COLOR_ACCENT,
+            corner_radius=20,
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            width=115,
+            height=34,
+            command=nav_cadastro
+        )
+        btn_cadastro.pack(side="left", padx=(10, 6))
+
+        # Botão Entrar
+        btn_entrar = ctk.CTkButton(
+            actions_frame,
+            text="Entrar",
+            fg_color=COLOR_ACCENT,
+            hover_color=COLOR_ACCENT_HOVER,
+            text_color="#000000",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            corner_radius=20,
+            width=80,
+            height=34,
+            command=nav_login
+        )
+        btn_entrar.pack(side="left")
+
 
     # ==========================================
     # HERO SECTION
@@ -648,10 +712,10 @@ def abrir_modal_mundo_eletrico(parent):
 
 class EletroBelApp(ctk.CTk):
     """Classe CTk compatível para inicialização direta do menu."""
-    def __init__(self, abrir_login=None, abrir_cadastro=None):
+    def __init__(self, abrir_login=None, abrir_cadastro=None, abrir_perfil=None, usuario_atual=None, fazer_logout=None):
         super().__init__()
         database.inicializar_banco()
-        Menu(self, abrir_login, abrir_cadastro)
+        Menu(self, abrir_login, abrir_cadastro, abrir_perfil, usuario_atual, fazer_logout)
 
 
 if __name__ == "__main__":
