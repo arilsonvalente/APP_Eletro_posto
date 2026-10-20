@@ -16,10 +16,10 @@ COLOR_TEXT_MAIN = "#FFFFFF"
 COLOR_TEXT_MUTED = "#8A99AD"
 
 
-def Menu(janela, abrir_login=None, abrir_cadastro=None, abrir_perfil=None, usuario_atual=None, fazer_logout=None):
+def Menu(janela, abrir_login=None, abrir_cadastro=None, abrir_perfil=None, usuario_atual=None, fazer_logout=None, abrir_mapa=None):
     """
     Renderiza a interface inicial do EletroBel integrada com navegação
-    para telas de login, cadastro, área do cliente (perfil) e consulta ao banco de dados.
+    para telas de login, cadastro, área do cliente (perfil), mapa e consulta ao banco de dados.
     """
     # Limpa componentes anteriores da janela
     for widget in janela.winfo_children():
@@ -38,7 +38,7 @@ def Menu(janela, abrir_login=None, abrir_cadastro=None, abrir_perfil=None, usuar
         else:
             try:
                 from login import LoginApp
-                LoginApp(janela, nav_cadastro, lambda: Menu(janela, nav_login, nav_cadastro, nav_perfil, usuario_atual, nav_logout), lambda u: Menu(janela, nav_login, nav_cadastro, nav_perfil, u, nav_logout))
+                LoginApp(janela, nav_cadastro, lambda: Menu(janela, nav_login, nav_cadastro, nav_perfil, usuario_atual, nav_logout, nav_mapa), lambda u: Menu(janela, nav_login, nav_cadastro, nav_perfil, u, nav_logout, nav_mapa))
             except Exception as e:
                 messagebox.showinfo("Navegação", f"Tela de Login solicitada. ({e})")
 
@@ -59,7 +59,7 @@ def Menu(janela, abrir_login=None, abrir_cadastro=None, abrir_perfil=None, usuar
             if usuario_atual:
                 try:
                     from perfil_usuario import PerfilUsuario
-                    PerfilUsuario(janela, usuario_atual, lambda: Menu(janela, nav_login, nav_cadastro, nav_perfil, usuario_atual, nav_logout), nav_logout)
+                    PerfilUsuario(janela, usuario_atual, lambda: Menu(janela, nav_login, nav_cadastro, nav_perfil, usuario_atual, nav_logout, nav_mapa), nav_logout)
                 except Exception as e:
                     messagebox.showinfo("Navegação", f"Perfil solicitado. ({e})")
             else:
@@ -69,7 +69,20 @@ def Menu(janela, abrir_login=None, abrir_cadastro=None, abrir_perfil=None, usuar
         if fazer_logout:
             fazer_logout()
         else:
-            Menu(janela, nav_login, nav_cadastro, nav_perfil, None, None)
+            Menu(janela, nav_login, nav_cadastro, nav_perfil, None, None, nav_mapa)
+
+    def nav_mapa():
+        if abrir_mapa:
+            abrir_mapa()
+        else:
+            try:
+                from mapa_eletroposto import EletroBelApp as MapaEletroposto
+                MapaEletroposto(
+                    janela,
+                    lambda: Menu(janela, nav_login, nav_cadastro, nav_perfil, usuario_atual, nav_logout, nav_mapa)
+                )
+            except Exception as e:
+                messagebox.showinfo("Navegação", f"Mapa de Eletropostos solicitado. ({e})")
 
     # Container com rolagem para adaptação a diferentes tamanhos de tela
     scroll_container = ctk.CTkScrollableFrame(
@@ -134,7 +147,7 @@ def Menu(janela, abrir_login=None, abrir_cadastro=None, abrir_perfil=None, usuar
         font=ctk.CTkFont(family="Segoe UI", size=13),
         width=140,
         height=32,
-        command=lambda: executar_busca()
+        command=nav_mapa
     )
     btn_mapa.pack(side="left", padx=4)
 
@@ -495,7 +508,7 @@ def Menu(janela, abrir_login=None, abrir_cadastro=None, abrir_perfil=None, usuar
             "titulo": "Encontrar Eletropostos",
             "desc": "Mapeamento em tempo real de pontos de recarga disponíveis em Belém e Ananindeua.",
             "destaque": True,
-            "acao": lambda: executar_busca()
+            "acao": nav_mapa
         },
         {
             "col": 1,
@@ -712,10 +725,10 @@ def abrir_modal_mundo_eletrico(parent):
 
 class EletroBelApp(ctk.CTk):
     """Classe CTk compatível para inicialização direta do menu."""
-    def __init__(self, abrir_login=None, abrir_cadastro=None, abrir_perfil=None, usuario_atual=None, fazer_logout=None):
+    def __init__(self, abrir_login=None, abrir_cadastro=None, abrir_perfil=None, usuario_atual=None, fazer_logout=None, abrir_mapa=None):
         super().__init__()
         database.inicializar_banco()
-        Menu(self, abrir_login, abrir_cadastro, abrir_perfil, usuario_atual, fazer_logout)
+        Menu(self, abrir_login, abrir_cadastro, abrir_perfil, usuario_atual, fazer_logout, abrir_mapa)
 
 
 if __name__ == "__main__":
