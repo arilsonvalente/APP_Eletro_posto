@@ -3,6 +3,7 @@ from menu import Menu
 from login import LoginApp
 from cadastro_usuario import cadastrar
 from perfil_usuario import PerfilUsuario
+from mapa_eletroposto import EletroBelApp
 import database
 
 # Inicializa o banco de dados e cria as tabelas caso ainda não existam
@@ -49,8 +50,12 @@ def fazer_logout():
     abrir_menu()
 
 
+def abrir_mapa():
+    EletroBelApp(janela, abrir_menu)
+
+
 def abrir_menu():
-    Menu(janela, abrir_login, abrir_cadastro, abrir_perfil, usuario_atual, fazer_logout)
+    Menu(janela, abrir_login, abrir_cadastro, abrir_perfil, usuario_atual, fazer_logout, abrir_mapa)
 
 
 # Tela inicial
@@ -58,4 +63,4 @@ abrir_menu()
 
 # Executar aplicação
 janela.mainloop()
-
+
