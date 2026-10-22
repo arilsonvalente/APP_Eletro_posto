@@ -1,5 +1,7 @@
+import os
 import customtkinter as ctk
 from tkinter import messagebox
+from PIL import Image
 from database import cadastrar_usuario
 
 # Paleta de cores EletroBel
@@ -12,6 +14,8 @@ COLOR_TEXT_MAIN = "#FFFFFF"
 COLOR_TEXT_MUTED = "#8B9DAA"
 COLOR_INPUT_BG = "#182229"
 COLOR_INPUT_BORDER = "#253440"
+
+LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LOGO_ELETROBEL_POSTO_NOVO.jpg")
 
 
 def cadastrar(janela, voltar_login):
@@ -36,37 +40,49 @@ def cadastrar(janela, voltar_login):
     )
     card.place(relx=0.5, rely=0.5, anchor="center")
 
-    # Header / Logo
+    # Header / Logomarca Centralizada
     logo_frame = ctk.CTkFrame(card, fg_color="transparent")
-    logo_frame.pack(pady=(25, 5))
+    logo_frame.pack(fill="x", pady=(18, 6))
 
-    ctk.CTkLabel(
-        logo_frame,
-        text="⚡",
-        font=ctk.CTkFont(size=28, weight="bold"),
-        text_color=COLOR_ACCENT
-    ).pack(side="left", padx=(0, 8))
-
-    ctk.CTkLabel(
-        logo_frame,
-        text="EletroBel",
-        font=ctk.CTkFont(family="Segoe UI", size=24, weight="bold"),
-        text_color=COLOR_TEXT_MAIN
-    ).pack(side="left")
+    if os.path.exists(LOGO_PATH):
+        try:
+            img_pil = Image.open(LOGO_PATH)
+            logo_img = ctk.CTkImage(
+                light_image=img_pil,
+                dark_image=img_pil,
+                size=(210, 118)
+            )
+            lbl_logo = ctk.CTkLabel(logo_frame, image=logo_img, text="")
+            lbl_logo.image = logo_img  # Mantém referência para evitar garbage collection
+            lbl_logo.pack(anchor="center")
+        except Exception:
+            ctk.CTkLabel(
+                logo_frame,
+                text="⚡ EletroBel",
+                font=ctk.CTkFont(family="Segoe UI", size=24, weight="bold"),
+                text_color=COLOR_ACCENT
+            ).pack(anchor="center")
+    else:
+        ctk.CTkLabel(
+            logo_frame,
+            text="⚡ EletroBel",
+            font=ctk.CTkFont(family="Segoe UI", size=24, weight="bold"),
+            text_color=COLOR_ACCENT
+        ).pack(anchor="center")
 
     ctk.CTkLabel(
         card,
         text="Criar Nova Conta",
         font=ctk.CTkFont(size=18, weight="bold"),
         text_color=COLOR_TEXT_MAIN
-    ).pack(pady=(0, 4))
+    ).pack(anchor="center", pady=(0, 2))
 
     ctk.CTkLabel(
         card,
         text="Preencha os dados abaixo para se cadastrar",
         font=ctk.CTkFont(size=12),
         text_color=COLOR_TEXT_MUTED
-    ).pack(pady=(0, 18))
+    ).pack(anchor="center", pady=(0, 12))
 
     # Campos de Entrada
     def criar_label_campo(parent, texto):
@@ -77,7 +93,7 @@ def cadastrar(janela, voltar_login):
             text_color=COLOR_TEXT_MUTED,
             anchor="w"
         )
-        label.pack(fill="x", padx=35, pady=(4, 2))
+        label.pack(fill="x", padx=35, pady=(2, 2))
         return label
 
     criar_label_campo(card, "Nome Completo")
@@ -85,39 +101,52 @@ def cadastrar(janela, voltar_login):
         card,
         placeholder_text="Ex: Maria Silva",
         width=360,
-        height=40,
+        height=38,
         fg_color=COLOR_INPUT_BG,
         border_color=COLOR_INPUT_BORDER,
         text_color=COLOR_TEXT_MAIN,
         corner_radius=8
     )
-    nome.pack(padx=35, pady=(0, 8))
+    nome.pack(padx=35, pady=(0, 6))
 
     criar_label_campo(card, "E-mail")
     email = ctk.CTkEntry(
         card,
         placeholder_text="Ex: maria@email.com",
         width=360,
-        height=40,
+        height=38,
         fg_color=COLOR_INPUT_BG,
         border_color=COLOR_INPUT_BORDER,
         text_color=COLOR_TEXT_MAIN,
         corner_radius=8
     )
-    email.pack(padx=35, pady=(0, 8))
+    email.pack(padx=35, pady=(0, 6))
+
+    criar_label_campo(card, "Telefone (opcional)")
+    telefone = ctk.CTkEntry(
+        card,
+        placeholder_text="Ex: (11) 99999-9999",
+        width=360,
+        height=38,
+        fg_color=COLOR_INPUT_BG,
+        border_color=COLOR_INPUT_BORDER,
+        text_color=COLOR_TEXT_MAIN,
+        corner_radius=8
+    )
+    telefone.pack(padx=35, pady=(0, 6))
 
     criar_label_campo(card, "Nome de Usuário (Login)")
     usuario = ctk.CTkEntry(
         card,
         placeholder_text="Ex: mariasilva",
         width=360,
-        height=40,
+        height=38,
         fg_color=COLOR_INPUT_BG,
         border_color=COLOR_INPUT_BORDER,
         text_color=COLOR_TEXT_MAIN,
         corner_radius=8
     )
-    usuario.pack(padx=35, pady=(0, 8))
+    usuario.pack(padx=35, pady=(0, 6))
 
     criar_label_campo(card, "Senha (mínimo 3 caracteres)")
     senha = ctk.CTkEntry(
@@ -125,18 +154,19 @@ def cadastrar(janela, voltar_login):
         placeholder_text="Digite sua senha",
         show="*",
         width=360,
-        height=40,
+        height=38,
         fg_color=COLOR_INPUT_BG,
         border_color=COLOR_INPUT_BORDER,
         text_color=COLOR_TEXT_MAIN,
         corner_radius=8
     )
-    senha.pack(padx=35, pady=(0, 16))
+    senha.pack(padx=35, pady=(0, 14))
 
     # Ação de salvar no banco de dados
     def salvar(event=None):
         n = nome.get().strip()
         e = email.get().strip()
+        f = telefone.get().strip()
         u = usuario.get().strip()
         s = senha.get().strip()
 
@@ -152,6 +182,7 @@ def cadastrar(janela, voltar_login):
             nome=n,
             email=e,
             usuario=u,
+            telefone=f,
             senha=s,
             tipo="cliente"
         )
@@ -165,6 +196,7 @@ def cadastrar(janela, voltar_login):
     # Atalho com tecla Enter nos campos
     nome.bind("<Return>", salvar)
     email.bind("<Return>", salvar)
+    telefone.bind("<Return>", salvar)
     usuario.bind("<Return>", salvar)
     senha.bind("<Return>", salvar)
 
@@ -177,11 +209,11 @@ def cadastrar(janela, voltar_login):
         hover_color=COLOR_ACCENT_HOVER,
         text_color="#000000",
         corner_radius=8,
-        height=42,
+        height=40,
         width=360,
         command=salvar
     )
-    btn_salvar.pack(padx=35, pady=(4, 10))
+    btn_salvar.pack(padx=35, pady=(2, 8))
 
     # Botão Voltar para o Login
     btn_voltar = ctk.CTkButton(
@@ -194,16 +226,16 @@ def cadastrar(janela, voltar_login):
         border_width=1,
         border_color=COLOR_BORDER,
         corner_radius=8,
-        height=38,
+        height=36,
         width=360,
         command=voltar_login
     )
-    btn_voltar.pack(padx=35, pady=(0, 25))
+    btn_voltar.pack(padx=35, pady=(0, 20))
 
 
 if __name__ == "__main__":
     app = ctk.CTk()
     app.title("Teste - Cadastro de Usuário")
-    app.geometry("800x600")
+    app.geometry("800x680")
     cadastrar(app, lambda: print("Voltar ao login pressionado"))
-    app.mainloop()
+    app.mainloop()

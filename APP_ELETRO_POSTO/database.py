@@ -494,7 +494,7 @@ def atualizar_arquivo_sql():
 # FUNÇÕES DE USUÁRIOS
 # =====================================================================
 
-def cadastrar_usuario(nome: str, email: str, usuario: str, senha: str, tipo: str = "cliente"):
+def cadastrar_usuario(nome: str, email: str, usuario: str, senha: str, tipo: str = "cliente", telefone: str = ""):
     """
     Cadastra um novo usuário no banco de dados MySQL.
     Retorna uma tupla (sucesso: bool, mensagem: str).
