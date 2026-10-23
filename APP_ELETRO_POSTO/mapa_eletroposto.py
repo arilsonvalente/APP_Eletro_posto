@@ -205,7 +205,7 @@ class EletroBelApp(ctk.CTkFrame):
 
         self.map_widget = TkinterMapView(frame_mapa, corner_radius=12)
         self.map_widget.pack(fill="both", expand=True, padx=2, pady=2)
-        self.map_widget.set_tile_server("https://a.tile.openstreetmap.org/{z}/{x}/{y}.png")
+        self.map_widget.set_tile_server("https://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga", max_zoom=22)  # Google normal como padrão
         self.centralizar_visao()
 
     def centralizar_visao(self):
