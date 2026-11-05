@@ -238,7 +238,6 @@ class EletroBelApp(ctk.CTkFrame):
             marcador = self.map_widget.set_marker(
                 posto["lat"],
                 posto["lon"],
-                text=f"{posto['nome']} ({posto['status']})",
                 command=lambda m, p=posto: self.focar_no_posto(p)
             )
             self.marcadores_no_mapa.append(marcador)
@@ -307,3 +306,41 @@ class EletroBelApp(ctk.CTkFrame):
                 command=lambda p=posto: self.focar_no_posto(p)
             )
             btn_acao.pack(fill="x", padx=12, pady=(0, 10))
+
+
+if __name__ == "__main__":
+    janela = ctk.CTk()
+    janela.title("EletroBel - Mapa de Eletropostos")
+    janela.geometry("1100x720")
+    janela.minsize(980, 640)
+
+    def voltar_menu():
+        try:
+            import database
+            from menu import Menu
+            database.inicializar_banco()
+            Menu(janela)
+        except Exception:
+            janela.destroy()
+
+    EletroBelApp(janela, voltar_menu)
+    janela.mainloop()
+
+
+if __name__ == "__main__":
+    janela = ctk.CTk()
+    janela.title("EletroBel - Mapa de Eletropostos")
+    janela.geometry("1100x720")
+    janela.minsize(980, 640)
+
+    def voltar_menu():
+        try:
+            import database
+            from menu import Menu
+            database.inicializar_banco()
+            Menu(janela)
+        except Exception:
+            janela.destroy()
+
+    EletroBelApp(janela, voltar_menu)
+    janela.mainloop()
