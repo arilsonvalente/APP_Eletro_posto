@@ -1,31 +1,42 @@
 import os
-from dotenv import load_dotenv
 import time
 import hashlib
 from decimal import Decimal
+from dotenv import load_dotenv
 import mysql.connector
 from mysql.connector import Error, IntegrityError
 
-load_dotenv()  # Carrega variáveis de ambiente do arquivo .env
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SQL_SCRIPT_PATH = os.path.join(BASE_DIR, "eletrobel_posto.sql")
+EXTERNAL_SQL_SCRIPT_PATH = os.path.abspath(
+    os.path.join(BASE_DIR, "..", "..", "Banco de Dados", "Banco de Dados Eletrobel_Posto.sql")
+)
+
+# Carrega variáveis de ambiente do arquivo .env (na pasta raiz ou na pasta do módulo)
+load_dotenv(os.path.join(BASE_DIR, "..", ".env"))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 # Configurações da conexão online com o banco de dados MySQL (Aiven Cloud)
 DB_CONFIG = {
     "host": os.getenv("DB_HOST"),
-    "user": os.getenv("DB_USER"),
+    "user": os.getenv("DB_USER") ,
     "password": os.getenv("DB_PASSWORD"),
     "database": os.getenv("DB_NAME"),
-    "port": int(os.getenv("DB_PORT"))
+    "port": int(os.getenv("DB_PORT"),
 }
 
-# BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# SQL_SCRIPT_PATH = os.path.join(BASE_DIR, "eletrobel_posto.sql")
-# EXTERNAL_SQL_SCRIPT_PATH = os.path.abspath(
-#     os.path.join(BASE_DIR, "..", "..", "Banco de Dados", "Banco de Dados Eletrobel_Posto.sql")
-# )
+# Configuração de fallback para o servidor MySQL local caso o servidor em nuvem esteja inacessível
+LOCAL_MYSQL_CONFIG = {
+    "host": os.getenv("DB_LOCAL_HOST", "127.0.0.1"),
+    "user": os.getenv("DB_LOCAL_USER", "root"),
+    "password": os.getenv("DB_LOCAL_PASSWORD", ""),
+    "database": os.getenv("DB_LOCAL_NAME", "eletrobel_posto"),
+    "port": int(os.getenv("DB_LOCAL_PORT", 3306)),
+}
 
 
 # =====================================================================
-# CLASSE DE CONEXÃO UNIFICADA (ANTIGO conecta_database.py)
+# CLASSE DE CONEXÃO UNIFICADA
 # =====================================================================
 
 class _ConexaoPersistenteContext:
@@ -52,7 +63,7 @@ class _ConexaoPersistenteContext:
 
 
 class Database:
-    """Gerencia a conexão online persistente com o banco de dados MySQL do EletroBel Posto."""
+    """Gerencia a conexão persistente com o banco de dados MySQL (Nuvem com fallback Local)."""
 
     def __init__(
         self,
@@ -69,21 +80,27 @@ class Database:
         self.database = database if database is not None else DB_CONFIG["database"]
         self.port = int(port if port is not None else DB_CONFIG["port"])
         self.conexao = None
+        self.usando_fallback_local = False
 
-    def criar_banco_se_nao_existir(self):
+    def criar_banco_se_nao_existir(self, host=None, user=None, password=None, port=None, database=None):
         """Garante que o banco de dados exista no servidor MySQL antes de conectar."""
+        h = host or self.host
+        u = user or self.user
+        pw = password if password is not None else self.password
+        p = port or self.port
+        db_name = database or self.database
         try:
             conn_temp = mysql.connector.connect(
-                host=self.host,
-                user=self.user,
-                password=self.password,
-                port=self.port,
+                host=h,
+                user=u,
+                password=pw,
+                port=p,
                 use_pure=True,
-                connection_timeout=15,
+                connection_timeout=5,
             )
             cursor = conn_temp.cursor()
             cursor.execute(
-                f"CREATE DATABASE IF NOT EXISTS `{self.database}` "
+                f"CREATE DATABASE IF NOT EXISTS `{db_name}` "
                 "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
             )
             conn_temp.commit()
@@ -94,44 +111,97 @@ class Database:
             print(f"[ERRO] Erro ao verificar/criar base de dados MySQL: {e}")
             return False
 
-    def conectar(self):
-        """Estabelece e retorna a conexão ativa com o banco de dados MySQL com reconexão automática."""
-        ultimo_erro = None
-        for tentativa in range(1, 4):
-            try:
-                if self.conexao is not None and self.conexao.is_connected():
-                    try:
-                        self.conexao.ping(reconnect=True, attempts=2, delay=1)
-                        return self.conexao
-                    except Error:
-                        self.conexao = None
+    def _abrir_conexao_direta(self, host, user, password, database, port, timeout=5):
+        """Abre uma conexão MySQL tratando criação automática do banco se necessário (Erro 1049)."""
+        try:
+            return mysql.connector.connect(
+                host=host,
+                user=user,
+                password=password,
+                database=database,
+                port=port,
+                charset="utf8mb4",
+                use_unicode=True,
+                autocommit=False,
+                use_pure=True,
+                connection_timeout=timeout,
+            )
+        except Error as e:
+            if getattr(e, "errno", None) == 1049:
+                if self.criar_banco_se_nao_existir(host, user, password, port, database):
+                    return mysql.connector.connect(
+                        host=host,
+                        user=user,
+                        password=password,
+                        database=database,
+                        port=port,
+                        charset="utf8mb4",
+                        use_unicode=True,
+                        autocommit=False,
+                        use_pure=True,
+                        connection_timeout=timeout,
+                    )
+            raise
 
-                self.conexao = mysql.connector.connect(
+    def conectar(self):
+        """Estabelece e retorna a conexão ativa com o banco MySQL (tenta Nuvem e fallback Local)."""
+        if self.conexao is not None and self.conexao.is_connected():
+            try:
+                self.conexao.ping(reconnect=True, attempts=2, delay=1)
+                return self.conexao
+            except Error:
+                self.conexao = None
+
+        # 1. Tenta conectar ao servidor configurado (Aiven Cloud / .env)
+        erro_primario = None
+        if not self.usando_fallback_local:
+            try:
+                self.conexao = self._abrir_conexao_direta(
                     host=self.host,
                     user=self.user,
                     password=self.password,
                     database=self.database,
                     port=self.port,
-                    charset="utf8mb4",
-                    use_unicode=True,
-                    autocommit=False,
-                    use_pure=True,
-                    connection_timeout=15,
+                    timeout=4,
                 )
-                if self.conexao.is_connected():
+                if self.conexao and self.conexao.is_connected():
                     return self.conexao
             except Error as e:
-                ultimo_erro = e
-                # Erro 1049 = Unknown database: cria automaticamente o banco no MySQL
-                if getattr(e, "errno", None) == 1049:
-                    if self.criar_banco_se_nao_existir():
-                        continue
-                if tentativa < 3:
-                    time.sleep(0.8 * tentativa)
+                erro_primario = e
 
-        print("[ERRO] Erro Critico: Nao foi possivel conectar ao banco de dados MySQL online.")
-        print(f"Detalhes do erro para debug: {ultimo_erro}")
-        raise ultimo_erro
+        # 2. Fallback automático para o MySQL local (127.0.0.1:3306) se a nuvem estiver offline/inacessível
+        if self.host != LOCAL_MYSQL_CONFIG["host"] or self.port != LOCAL_MYSQL_CONFIG["port"]:
+            try:
+                self.conexao = self._abrir_conexao_direta(
+                    host=LOCAL_MYSQL_CONFIG["host"],
+                    user=LOCAL_MYSQL_CONFIG["user"],
+                    password=LOCAL_MYSQL_CONFIG["password"],
+                    database=LOCAL_MYSQL_CONFIG["database"],
+                    port=LOCAL_MYSQL_CONFIG["port"],
+                    timeout=4,
+                )
+                if self.conexao and self.conexao.is_connected():
+                    if not self.usando_fallback_local:
+                        print(
+                            f"[AVISO] Servidor em nuvem '{self.host}' inacessivel no momento. "
+                            f"Conectado automaticamente ao MySQL local ({LOCAL_MYSQL_CONFIG['host']}:{LOCAL_MYSQL_CONFIG['port']}/{LOCAL_MYSQL_CONFIG['database']})."
+                        )
+                    self.usando_fallback_local = True
+                    self.host = LOCAL_MYSQL_CONFIG["host"]
+                    self.user = LOCAL_MYSQL_CONFIG["user"]
+                    self.password = LOCAL_MYSQL_CONFIG["password"]
+                    self.database = LOCAL_MYSQL_CONFIG["database"]
+                    self.port = LOCAL_MYSQL_CONFIG["port"]
+                    return self.conexao
+            except Error as erro_local:
+                print("[ERRO] Nao foi possivel conectar nem ao MySQL em nuvem nem ao MySQL local.")
+                print(f"- Erro Nuvem: {erro_primario}")
+                print(f"- Erro Local: {erro_local}")
+                raise erro_primario or erro_local
+
+        print("[ERRO] Erro Critico: Nao foi possivel conectar ao banco de dados MySQL.")
+        print(f"Detalhes do erro para debug: {erro_primario}")
+        raise erro_primario
 
     def obter_conexao(self):
         """Retorna a conexão persistente ativa, reconectando se necessário."""
@@ -147,12 +217,12 @@ class Database:
             self.conexao = None
 
 
-# Instância global persistente para evitar múltiplas aberturas de socket TLS seguidas
+# Instância global persistente
 _db_global = Database()
 
 
 def conectar():
-    """Retorna um gerenciador de contexto com a conexão MySQL online reutilizável."""
+    """Retorna um gerenciador de contexto com a conexão MySQL reutilizável."""
     return _ConexaoPersistenteContext(_db_global)
 
 
@@ -164,7 +234,8 @@ def verificar_conexao():
             cursor.execute("SELECT DATABASE(), VERSION()")
             db_atual, versao = cursor.fetchone()
             cursor.close()
-            msg = f"Conectado ao MySQL {versao} | Banco: {db_atual} ({_db_global.host}:{_db_global.port})"
+            modo = "MySQL Local (Fallback)" if _db_global.usando_fallback_local else "MySQL Online (Nuvem)"
+            msg = f"Conectado ao {modo} {versao} | Banco: {db_atual} ({_db_global.host}:{_db_global.port})"
             return True, msg
     except Exception as e:
         return False, f"Falha na conexão com o MySQL: {e}"
@@ -180,6 +251,10 @@ def _normalizar_linha(row: dict) -> dict:
             normalizado[k] = float(v)
         else:
             normalizado[k] = v
+    if "horario_inicio" in normalizado and "data_inicio" not in normalizado:
+        normalizado["data_inicio"] = normalizado["horario_inicio"]
+    if "horario_final" in normalizado and "data_fim" not in normalizado:
+        normalizado["data_fim"] = normalizado["horario_final"]
     return normalizado
 
 
@@ -189,7 +264,7 @@ def hash_senha(senha: str) -> str:
 
 
 def inicializar_banco(exportar_sql: bool = False):
-    """Cria todas as tabelas necessárias no MySQL online e popula dados iniciais caso esteja vazio."""
+    """Cria todas as tabelas necessárias no MySQL e popula dados iniciais caso esteja vazio."""
     with conectar() as conn:
         cursor = conn.cursor(dictionary=True)
 
@@ -199,12 +274,18 @@ def inicializar_banco(exportar_sql: bool = False):
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 nome VARCHAR(150) NOT NULL,
                 email VARCHAR(255) UNIQUE NOT NULL,
+                telefone VARCHAR(30) DEFAULT NULL,
                 usuario VARCHAR(50) UNIQUE NOT NULL,
                 senha VARCHAR(255) NOT NULL,
                 tipo ENUM('cliente', 'admin') DEFAULT 'cliente',
                 criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """)
+
+        # Garante que a coluna telefone exista caso a tabela já tenha sido criada anteriormente
+        cursor.execute("SHOW COLUMNS FROM usuarios LIKE 'telefone'")
+        if not cursor.fetchone():
+            cursor.execute("ALTER TABLE usuarios ADD COLUMN telefone VARCHAR(30) DEFAULT NULL AFTER email")
 
         # 2. Tabela de Veículos
         cursor.execute("""
@@ -245,8 +326,8 @@ def inicializar_banco(exportar_sql: bool = False):
                 usuario_id INT NOT NULL,
                 estacao_id INT NOT NULL,
                 veiculo_id INT NULL,
-                data_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                data_fim TIMESTAMP NULL,
+                horario_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                horario_final TIMESTAMP NULL,
                 energia_kwh DECIMAL(8, 2) DEFAULT 0.00,
                 valor_total DECIMAL(10, 2) DEFAULT 0.00,
                 status ENUM('Em andamento', 'Concluída', 'Cancelada') DEFAULT 'Em andamento',
@@ -279,7 +360,7 @@ def inicializar_banco(exportar_sql: bool = False):
         _popular_dados_iniciais(cursor, conn)
         cursor.close()
 
-    print(f"[OK] Conectado ao banco de dados MySQL online ({_db_global.host}:{_db_global.port}/{_db_global.database})")
+    print(f"[OK] Conectado ao banco de dados MySQL ({_db_global.host}:{_db_global.port}/{_db_global.database})")
     if exportar_sql:
         atualizar_arquivo_sql()
 
@@ -382,6 +463,7 @@ def atualizar_arquivo_sql():
                 "    id INT AUTO_INCREMENT PRIMARY KEY,",
                 "    nome VARCHAR(150) NOT NULL,",
                 "    email VARCHAR(255) UNIQUE NOT NULL,",
+                "    telefone VARCHAR(30) DEFAULT NULL,",
                 "    usuario VARCHAR(50) UNIQUE NOT NULL,",
                 "    senha VARCHAR(255) NOT NULL, -- Hash SHA-256",
                 "    tipo ENUM('cliente', 'admin') DEFAULT 'cliente',",
@@ -421,8 +503,8 @@ def atualizar_arquivo_sql():
                 "    usuario_id INT NOT NULL,",
                 "    estacao_id INT NOT NULL,",
                 "    veiculo_id INT NULL,",
-                "    data_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,",
-                "    data_fim TIMESTAMP NULL,",
+                "    horario_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,",
+                "    horario_final TIMESTAMP NULL,",
                 "    energia_kwh DECIMAL(8, 2) DEFAULT 0.00,",
                 "    valor_total DECIMAL(10, 2) DEFAULT 0.00,",
                 "    status ENUM('Em andamento', 'Concluída', 'Cancelada') DEFAULT 'Em andamento',",
@@ -448,20 +530,15 @@ def atualizar_arquivo_sql():
                 "-- =====================================================================",
             ]
 
-            tabelas = [
-                ("usuarios", ["id", "nome", "email", "usuario", "senha", "tipo", "criado_em"]),
-                ("estacoes", ["id", "nome", "endereco", "potencia_kw", "tipo_conector", "preco_kwh", "status", "criado_em"]),
-                ("veiculos", ["id", "usuario_id", "marca", "modelo", "placa", "ano", "tipo_conector", "capacidade_bateria_kwh", "criado_em"]),
-                ("recargas", ["id", "usuario_id", "estacao_id", "veiculo_id", "data_inicio", "data_fim", "energia_kwh", "valor_total", "status"]),
-                ("servicos", ["id", "titulo", "descricao", "preco", "criado_em"]),
-            ]
+            tabelas = ["usuarios", "estacoes", "veiculos", "recargas", "servicos"]
 
-            for nome_tabela, colunas in tabelas:
-                cursor.execute(f"SELECT {', '.join(colunas)} FROM {nome_tabela} ORDER BY id ASC")
+            for nome_tabela in tabelas:
+                cursor.execute(f"SELECT * FROM {nome_tabela} ORDER BY id ASC")
                 registros = cursor.fetchall()
                 if not registros:
                     continue
 
+                colunas = list(registros[0].keys())
                 linhas.append("")
                 linhas.append(f"-- Tabela: {nome_tabela}")
                 cols_str = ", ".join(colunas)
@@ -503,6 +580,7 @@ def cadastrar_usuario(nome: str, email: str, usuario: str, senha: str, tipo: str
     email = email.strip().lower()
     usuario = usuario.strip().lower()
     senha = senha.strip()
+    telefone = (telefone or "").strip() or None
 
     if not nome or not email or not usuario or not senha:
         return False, "Todos os campos são obrigatórios!"
@@ -516,9 +594,9 @@ def cadastrar_usuario(nome: str, email: str, usuario: str, senha: str, tipo: str
         with conectar() as conn:
             cursor = conn.cursor(dictionary=True)
             cursor.execute("""
-                INSERT INTO usuarios (nome, email, usuario, senha, tipo)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (nome, email, usuario, senha_cripto, tipo))
+                INSERT INTO usuarios (nome, email, telefone, usuario, senha, tipo)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (nome, email, telefone, usuario, senha_cripto, tipo))
             conn.commit()
             cursor.close()
         atualizar_arquivo_sql()
@@ -545,7 +623,7 @@ def autenticar_usuario(usuario: str, senha: str):
     with conectar() as conn:
         cursor = conn.cursor(dictionary=True)
         cursor.execute("""
-            SELECT id, nome, email, usuario, tipo, criado_em
+            SELECT id, nome, email, telefone, usuario, tipo, criado_em
             FROM usuarios
             WHERE usuario = %s AND senha = %s
         """, (usuario, senha_cripto))
@@ -560,7 +638,7 @@ def listar_usuarios():
     """Retorna a lista de todos os usuários cadastrados."""
     with conectar() as conn:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT id, nome, email, usuario, tipo, criado_em FROM usuarios ORDER BY id DESC")
+        cursor.execute("SELECT id, nome, email, telefone, usuario, tipo, criado_em FROM usuarios ORDER BY id DESC")
         rows = [_normalizar_linha(row) for row in cursor.fetchall()]
         cursor.close()
         return rows
@@ -571,7 +649,7 @@ def obter_usuario_por_id(usuario_id: int):
     with conectar() as conn:
         cursor = conn.cursor(dictionary=True)
         cursor.execute(
-            "SELECT id, nome, email, usuario, tipo, criado_em FROM usuarios WHERE id = %s",
+            "SELECT id, nome, email, telefone, usuario, tipo, criado_em FROM usuarios WHERE id = %s",
             (usuario_id,),
         )
         row = cursor.fetchone()
@@ -765,7 +843,7 @@ def listar_recargas(usuario_id: int = None):
 
 
 if __name__ == "__main__":
-    print("Verificando conexao com o banco de dados MySQL online...")
+    print("Verificando conexao com o banco de dados MySQL...")
     ok, info = verificar_conexao()
     print(f"[{'OK' if ok else 'ERRO'}] {info}")
 
