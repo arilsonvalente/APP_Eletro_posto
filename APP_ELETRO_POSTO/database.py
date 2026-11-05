@@ -78,7 +78,8 @@ class Database:
         self.user = user if user is not None else DB_CONFIG["user"]
         self.password = password if password is not None else DB_CONFIG["password"]
         self.database = database if database is not None else DB_CONFIG["database"]
-        self.port = int(port if port is not None else DB_CONFIG["port"])
+        raw_port = port if port is not None else DB_CONFIG["port"]
+        self.port = int(raw_port) if str(raw_port).strip().isdigit() else 27403
         self.conexao = None
         self.usando_fallback_local = False
 
@@ -227,9 +228,11 @@ def conectar():
 
 
 def verificar_conexao():
-    """Testa a conexão com o servidor MySQL e retorna (sucesso: bool, mensagem: str)."""
+    """Testa a conexão com o banco de dados e retorna (sucesso: bool, mensagem: str)."""
     try:
         with conectar() as conn:
+            if getattr(conn, "is_sqlite", False):
+                return True, f"Conectado ao banco local SQLite ({SQLITE_DB_PATH})"
             cursor = conn.cursor()
             cursor.execute("SELECT DATABASE(), VERSION()")
             db_atual, versao = cursor.fetchone()
@@ -238,7 +241,7 @@ def verificar_conexao():
             msg = f"Conectado ao {modo} {versao} | Banco: {db_atual} ({_db_global.host}:{_db_global.port})"
             return True, msg
     except Exception as e:
-        return False, f"Falha na conexão com o MySQL: {e}"
+        return False, f"Falha na conexão com o banco de dados: {e}"
 
 
 def _normalizar_linha(row: dict) -> dict:
@@ -305,19 +308,19 @@ def inicializar_banco(exportar_sql: bool = False):
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """)
 
-        # 3. Tabela de Estações de Recarga
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS estacoes (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                nome VARCHAR(100) NOT NULL,
-                endereco VARCHAR(255) NOT NULL,
-                potencia_kw DECIMAL(6, 2) NOT NULL,
-                tipo_conector VARCHAR(30) NOT NULL,
-                preco_kwh DECIMAL(8, 2) NOT NULL,
-                status ENUM('Disponível', 'Ocupado', 'Manutenção') DEFAULT 'Disponível',
-                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        """)
+            # 3. Tabela de Estações de Recarga
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS estacoes (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    nome VARCHAR(100) NOT NULL,
+                    endereco VARCHAR(255) NOT NULL,
+                    potencia_kw DECIMAL(6, 2) NOT NULL,
+                    tipo_conector VARCHAR(30) NOT NULL,
+                    preco_kwh DECIMAL(8, 2) NOT NULL,
+                    status ENUM('Disponível', 'Ocupado', 'Manutenção') DEFAULT 'Disponível',
+                    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
 
         # 4. Tabela de Histórico de Recargas
         cursor.execute("""
@@ -343,16 +346,16 @@ def inicializar_banco(exportar_sql: bool = False):
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """)
 
-        # 5. Tabela de Serviços e Manutenções
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS servicos (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                titulo VARCHAR(150) NOT NULL,
-                descricao TEXT,
-                preco DECIMAL(10, 2),
-                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        """)
+            # 5. Tabela de Serviços e Manutenções
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS servicos (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    titulo VARCHAR(150) NOT NULL,
+                    descricao TEXT,
+                    preco DECIMAL(10, 2),
+                    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
 
         conn.commit()
 

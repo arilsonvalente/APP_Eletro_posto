@@ -86,23 +86,17 @@ ON DUPLICATE KEY UPDATE nome = VALUES(nome), email = VALUES(email), usuario = VA
 
 -- Tabela: estacoes
 INSERT INTO eletrobel_posto.estacoes (id, nome, endereco, potencia_kw, tipo_conector, preco_kwh, status, criado_em) VALUES
-(5, 'Estação EletroBel Doca', 'Av. Visconde de Souza Franco (Doca), 500 - Belém, PA', 150.00, 'CCS2 / Tipo 2', 1.95, 'Disponível', '2026-10-16 23:40:26'),
-(6, 'Estação Shopping Bosque Grão-Pará', 'Av. Centenário, 1052 - Belém, PA', 60.00, 'CCS2', 2.10, 'Disponível', '2026-10-16 23:40:26'),
-(7, 'Estação Metrópole Ananindeua', 'Rodovia BR-316, Km 4 - Coqueiro, Ananindeua, PA', 120.00, 'CCS2 / CHAdeMO', 1.90, 'Disponível', '2026-10-16 23:40:26'),
-(8, 'Estação Cidade Nova', 'Av. Arterial 18, 400 - Cidade Nova, Ananindeua, PA', 22.00, 'Tipo 2', 1.45, 'Disponível', '2026-10-16 23:40:26'),
-(9, 'Estação Aeroporto Internacional', 'Val-de-Cans - Estacionamento VIP, Belém, PA', 100.00, 'CCS2', 2.30, 'Ocupado', '2026-10-16 23:40:26'),
-(10, 'Estação BRT Augusto Montenegro', 'Av. Augusto Montenegro, Km 8 - Parque Verde, Belém, PA', 90.00, 'CCS2 / Tipo 2', 1.85, 'Disponível', '2026-10-16 23:40:26')
+(5, 'Estação EletroBel Doca', 'Av. Visconde de Souza Franco (Doca), 500 - Belém, PA', 150.0, 'CCS2 / Tipo 2', 1.95, 'Disponível', '2026-10-16 23:40:26'),
+(6, 'Estação Shopping Bosque Grão-Pará', 'Av. Centenário, 1052 - Belém, PA', 60.0, 'CCS2', 2.1, 'Disponível', '2026-10-16 23:40:26'),
+(7, 'Estação Metrópole Ananindeua', 'Rodovia BR-316, Km 4 - Coqueiro, Ananindeua, PA', 120.0, 'CCS2 / CHAdeMO', 1.9, 'Disponível', '2026-10-16 23:40:26'),
+(8, 'Estação Cidade Nova', 'Av. Arterial 18, 400 - Cidade Nova, Ananindeua, PA', 22.0, 'Tipo 2', 1.45, 'Disponível', '2026-10-16 23:40:26'),
+(9, 'Estação Aeroporto Internacional', 'Val-de-Cans - Estacionamento VIP, Belém, PA', 100.0, 'CCS2', 2.3, 'Ocupado', '2026-10-16 23:40:26'),
+(10, 'Estação BRT Augusto Montenegro', 'Av. Augusto Montenegro, Km 8 - Parque Verde, Belém, PA', 90.0, 'CCS2 / Tipo 2', 1.85, 'Disponível', '2026-10-16 23:40:26')
 ON DUPLICATE KEY UPDATE nome = VALUES(nome), endereco = VALUES(endereco), potencia_kw = VALUES(potencia_kw), tipo_conector = VALUES(tipo_conector), preco_kwh = VALUES(preco_kwh), status = VALUES(status), criado_em = VALUES(criado_em);
-
--- Tabela: veiculos
-INSERT INTO eletrobel_posto.veiculos (id, usuario_id, marca, modelo, placa, ano, tipo_conector, capacidade_bateria_kwh, criado_em) VALUES
-(1, 3, 'byd', 'dophin', 'BR22F22', 2026, 'Tipo', 38.00, '2026-10-21 22:25:45'),
-(2, 3, 'gwm', 'Haval', 'BR22FG01', 2025, 'Tipo', 50.00, '2026-10-21 22:48:05')
-ON DUPLICATE KEY UPDATE usuario_id = VALUES(usuario_id), marca = VALUES(marca), modelo = VALUES(modelo), placa = VALUES(placa), ano = VALUES(ano), tipo_conector = VALUES(tipo_conector), capacidade_bateria_kwh = VALUES(capacidade_bateria_kwh), criado_em = VALUES(criado_em);
 
 -- Tabela: servicos
 INSERT INTO eletrobel_posto.servicos (id, titulo, descricao, preco, criado_em) VALUES
-(1, 'Instalação de Wallbox Residencial', 'Instalação completa e homologada de carregador até 22kW.', 1200.00, '2026-10-16 22:51:54'),
-(2, 'Diagnóstico de Bateria de Tração', 'Varredura computadorizada e verificação de degradação das células.', 350.00, '2026-10-16 22:51:54'),
-(3, 'Manutenção Preventiva de Conectores', 'Inspeção e limpeza técnica dos conectores de carga rápida.', 180.00, '2026-10-16 22:51:54')
+(1, 'Instalação de Wallbox Residencial', 'Instalação completa e homologada de carregador até 22kW.', 1200.0, '2026-10-16 22:51:54'),
+(2, 'Diagnóstico de Bateria de Tração', 'Varredura computadorizada e verificação de degradação das células.', 350.0, '2026-10-16 22:51:54'),
+(3, 'Manutenção Preventiva de Conectores', 'Inspeção e limpeza técnica dos conectores de carga rápida.', 180.0, '2026-10-16 23:40:26')
 ON DUPLICATE KEY UPDATE titulo = VALUES(titulo), descricao = VALUES(descricao), preco = VALUES(preco), criado_em = VALUES(criado_em);

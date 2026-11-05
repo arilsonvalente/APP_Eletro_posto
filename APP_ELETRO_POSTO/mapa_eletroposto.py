@@ -621,7 +621,7 @@ class EletroBelApp(ctk.CTkFrame):
 
         self.map_widget = TkinterMapView(frame_mapa, corner_radius=12)
         self.map_widget.pack(fill="both", expand=True, padx=2, pady=2)
-        self.map_widget.set_tile_server("https://a.tile.openstreetmap.org/{z}/{x}/{y}.png")
+        self.map_widget.set_tile_server("https://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga", max_zoom=22)  # Google normal como padrão
         self.centralizar_visao()
 
         # 3. Card Inferior de Detalhes da Estação Selecionada
@@ -971,28 +971,46 @@ class EletroBelApp(ctk.CTkFrame):
                 border_width=1,
                 border_color=COR_VERDE,
                 text_color=COR_VERDE,
-                hover_color="#213D30",
-                height=28,
-                command=lambda p=posto: self.focar_no_posto(p),
-            ).grid(row=0, column=0, padx=(0, 4), sticky="ew")
-
-            ctk.CTkButton(
-                botoes_frame,
-                text="🗺️ Abrir Rota",
-                font=ctk.CTkFont(size=11, weight="bold"),
-                fg_color="#162230",
-                border_width=1,
-                border_color=COR_BORDA,
-                text_color=COR_TEXTO_MAIN,
-                hover_color="#22354A",
-                height=28,
-                command=lambda p=posto: self.abrir_rota_google_maps(p),
-            ).grid(row=0, column=1, padx=(4, 0), sticky="ew")
+                hover_color="#0F2B22",
+                height=30,
+                command=lambda p=posto: self.focar_no_posto(p)
+            )
+            btn_acao.pack(fill="x", padx=12, pady=(0, 10))
 
 
 if __name__ == "__main__":
-    app = ctk.CTk()
-    app.title("EletroBel - Mapa de Eletropostos (Belém e Ananindeua)")
-    app.geometry("1200x760")
-    EletroBelApp(app, lambda: print("Retornar ao menu"))
-    app.mainloop()
+    janela = ctk.CTk()
+    janela.title("EletroBel - Mapa de Eletropostos")
+    janela.geometry("1100x720")
+    janela.minsize(980, 640)
+
+    def voltar_menu():
+        try:
+            import database
+            from menu import Menu
+            database.inicializar_banco()
+            Menu(janela)
+        except Exception:
+            janela.destroy()
+
+    EletroBelApp(janela, voltar_menu)
+    janela.mainloop()
+
+
+if __name__ == "__main__":
+    janela = ctk.CTk()
+    janela.title("EletroBel - Mapa de Eletropostos")
+    janela.geometry("1100x720")
+    janela.minsize(980, 640)
+
+    def voltar_menu():
+        try:
+            import database
+            from menu import Menu
+            database.inicializar_banco()
+            Menu(janela)
+        except Exception:
+            janela.destroy()
+
+    EletroBelApp(janela, voltar_menu)
+    janela.mainloop()
