@@ -1,122 +1,109 @@
 -- =====================================================================
--- PROJETO: APP ELETRO POSTO (EletroBel)
--- SCRIPT DE CRIAÇÃO DO BANCO DE DADOS EM SQL
--- Compatível com: SQLite, MySQL, MariaDB, PostgreSQL
+-- SCRIPT SQL MYSQL ATUALIZADO COM O BANCO DE DADOS - ELETROBEL POSTO
+-- Banco de Dados: MySQL (eletrobel_posto)
 -- =====================================================================
 
--- Habilitar verificação de Chaves Estrangeiras (específico para SQLite)
-PRAGMA foreign_keys = ON;
+CREATE DATABASE IF NOT EXISTS eletrobel_posto
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci;
 
--- ---------------------------------------------------------------------
--- 1. TABELA DE USUÁRIOS (Clientes e Administradores)
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS usuarios (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nome TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    usuario TEXT UNIQUE NOT NULL,
-    senha TEXT NOT NULL, -- Senha armazenada em hash SHA-256
-    tipo TEXT DEFAULT 'cliente', -- 'cliente' ou 'admin'
+USE eletrobel_posto;
+
+-- 1. Tabela de Usuários
+CREATE TABLE IF NOT EXISTS eletrobel_posto.usuarios (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nome VARCHAR(150) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    usuario VARCHAR(50) UNIQUE NOT NULL,
+    senha VARCHAR(255) NOT NULL, -- Hash SHA-256
+    tipo ENUM('cliente', 'admin') DEFAULT 'cliente',
     criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ---------------------------------------------------------------------
--- 2. TABELA DE VEÍCULOS ELÉTRICOS (Vinculados aos Usuários)
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS veiculos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    usuario_id INTEGER NOT NULL,
-    marca TEXT NOT NULL,
-    modelo TEXT NOT NULL,
-    placa TEXT UNIQUE NOT NULL,
-    ano INTEGER,
-    tipo_conector TEXT NOT NULL, -- Ex: 'CCS2', 'Tipo 2', 'CHAdeMO'
-    capacidade_bateria_kwh REAL,
+-- 2. Tabela de Veículos
+CREATE TABLE IF NOT EXISTS eletrobel_posto.veiculos (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    usuario_id INT NOT NULL,
+    marca VARCHAR(50) NOT NULL,
+    modelo VARCHAR(50) NOT NULL,
+    placa VARCHAR(10) UNIQUE NOT NULL,
+    ano INT,
+    tipo_conector VARCHAR(30) NOT NULL, -- Ex: 'CCS2', 'Tipo 2', 'CHAdeMO'
+    capacidade_bateria_kwh DECIMAL(6, 2),
     criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (usuario_id) REFERENCES usuarios (id) ON DELETE CASCADE
-);
+    CONSTRAINT fk_veiculos_usuario FOREIGN KEY (usuario_id)
+        REFERENCES eletrobel_posto.usuarios (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ---------------------------------------------------------------------
--- 3. TABELA DE ESTAÇÕES DE RECARGA (Eletropostos)
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS estacoes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    nome TEXT NOT NULL,
-    endereco TEXT NOT NULL,
-    potencia_kw REAL NOT NULL,
-    tipo_conector TEXT NOT NULL,
-    preco_kwh REAL NOT NULL,
-    status TEXT DEFAULT 'Disponível', -- 'Disponível', 'Ocupado', 'Manutenção'
+-- 3. Tabela de Estações de Recarga
+CREATE TABLE IF NOT EXISTS eletrobel_posto.estacoes (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nome VARCHAR(100) NOT NULL,
+    endereco VARCHAR(255) NOT NULL,
+    potencia_kw DECIMAL(6, 2) NOT NULL,
+    tipo_conector VARCHAR(30) NOT NULL,
+    preco_kwh DECIMAL(8, 2) NOT NULL,
+    status ENUM('Disponível', 'Ocupado', 'Manutenção') DEFAULT 'Disponível',
     criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ---------------------------------------------------------------------
--- 4. TABELA DE HISTÓRICO DE RECARGAS
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS recargas (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    usuario_id INTEGER NOT NULL,
-    estacao_id INTEGER NOT NULL,
-    veiculo_id INTEGER,
+-- 4. Tabela de Histórico de Recargas
+CREATE TABLE IF NOT EXISTS eletrobel_posto.recargas (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    usuario_id INT NOT NULL,
+    estacao_id INT NOT NULL,
+    veiculo_id INT NULL,
     data_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    data_fim TIMESTAMP,
-    energia_kwh REAL DEFAULT 0.0,
-    valor_total REAL DEFAULT 0.0,
-    status TEXT DEFAULT 'Em andamento', -- 'Em andamento', 'Concluída', 'Cancelada'
-    FOREIGN KEY (usuario_id) REFERENCES usuarios (id) ON DELETE CASCADE,
-    FOREIGN KEY (estacao_id) REFERENCES estacoes (id) ON DELETE CASCADE,
-    FOREIGN KEY (veiculo_id) REFERENCES veiculos (id) ON DELETE SET NULL
-);
+    data_fim TIMESTAMP NULL,
+    energia_kwh DECIMAL(8, 2) DEFAULT 0.00,
+    valor_total DECIMAL(10, 2) DEFAULT 0.00,
+    status ENUM('Em andamento', 'Concluída', 'Cancelada') DEFAULT 'Em andamento',
+    CONSTRAINT fk_recargas_usuario FOREIGN KEY (usuario_id)
+        REFERENCES eletrobel_posto.usuarios (id) ON DELETE CASCADE,
+    CONSTRAINT fk_recargas_estacao FOREIGN KEY (estacao_id)
+        REFERENCES eletrobel_posto.estacoes (id) ON DELETE CASCADE,
+    CONSTRAINT fk_recargas_veiculo FOREIGN KEY (veiculo_id)
+        REFERENCES eletrobel_posto.veiculos (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ---------------------------------------------------------------------
--- 5. TABELA DE SERVIÇOS E MANUTENÇÕES
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS servicos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    titulo TEXT NOT NULL,
+-- 5. Tabela de Serviços e Manutenções
+CREATE TABLE IF NOT EXISTS eletrobel_posto.servicos (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    titulo VARCHAR(150) NOT NULL,
     descricao TEXT,
-    preco REAL,
+    preco DECIMAL(10, 2),
     criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- =====================================================================
--- ÍNDICES PARA OTIMIZAÇÃO DE BUSCA E PERFORMANCE
--- =====================================================================
-CREATE INDEX IF NOT EXISTS idx_usuarios_login ON usuarios (usuario, senha);
-CREATE INDEX IF NOT EXISTS idx_veiculos_usuario ON veiculos (usuario_id);
-CREATE INDEX IF NOT EXISTS idx_recargas_usuario ON recargas (usuario_id);
-CREATE INDEX IF NOT EXISTS idx_recargas_estacao ON recargas (estacao_id);
-CREATE INDEX IF NOT EXISTS idx_estacoes_status ON estacoes (status);
-
--- =====================================================================
--- DADOS INICIAIS (CARGA / SEED DATA)
+-- DADOS DO BANCO DE DADOS MYSQL
 -- =====================================================================
 
--- 1. Usuário Administrador Padrão (Login: admin | Senha original: 123)
--- O hash SHA-256 de '123' é: a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3
-INSERT OR IGNORE INTO usuarios (id, nome, email, usuario, senha, tipo)
-VALUES (
-    1,
-    'Administrador EletroBel',
-    'admin@eletrobel.com',
-    'admin',
-    'a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3',
-    'admin'
-);
+-- Tabela: usuarios
+INSERT INTO eletrobel_posto.usuarios (id, nome, email, usuario, senha, tipo, criado_em) VALUES
+(1, 'Administrador EletroBel', 'admin@eletrobel.com', 'admin', 'a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3', 'admin', '2026-10-16 22:51:54'),
+(3, 'arilson', 'arilsonvalente@gmail.com', 'arilsonvalente', '8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92', 'cliente', '2026-10-16 23:23:22')
+ON DUPLICATE KEY UPDATE nome = VALUES(nome), email = VALUES(email), usuario = VALUES(usuario), senha = VALUES(senha), tipo = VALUES(tipo), criado_em = VALUES(criado_em);
 
--- 2. Estações de Recarga Iniciais (Região Metropolitana de Belém / Ananindeua)
-INSERT OR IGNORE INTO estacoes (id, nome, endereco, potencia_kw, tipo_conector, preco_kwh, status)
-VALUES 
-    (1, 'Estação EletroBel Doca', 'Av. Visconde de Souza Franco (Doca), 500 - Belém, PA', 150.0, 'CCS2 / Tipo 2', 1.95, 'Disponível'),
-    (2, 'Estação Shopping Bosque Grão-Pará', 'Av. Centenário, 1052 - Belém, PA', 60.0, 'CCS2', 2.10, 'Disponível'),
-    (3, 'Estação Metrópole Ananindeua', 'Rodovia BR-316, Km 4 - Coqueiro, Ananindeua, PA', 120.0, 'CCS2 / CHAdeMO', 1.90, 'Disponível'),
-    (4, 'Estação Cidade Nova', 'Av. Arterial 18, 400 - Cidade Nova, Ananindeua, PA', 22.0, 'Tipo 2', 1.45, 'Disponível'),
-    (5, 'Estação Aeroporto Internacional', 'Val-de-Cans - Estacionamento VIP, Belém, PA', 100.0, 'CCS2', 2.30, 'Ocupado'),
-    (6, 'Estação BRT Augusto Montenegro', 'Av. Augusto Montenegro, Km 8 - Parque Verde, Belém, PA', 90.0, 'CCS2 / Tipo 2', 1.85, 'Disponível');
+-- Tabela: estacoes
+INSERT INTO eletrobel_posto.estacoes (id, nome, endereco, potencia_kw, tipo_conector, preco_kwh, status, criado_em) VALUES
+(5, 'Estação EletroBel Doca', 'Av. Visconde de Souza Franco (Doca), 500 - Belém, PA', 150.00, 'CCS2 / Tipo 2', 1.95, 'Disponível', '2026-10-16 23:40:26'),
+(6, 'Estação Shopping Bosque Grão-Pará', 'Av. Centenário, 1052 - Belém, PA', 60.00, 'CCS2', 2.10, 'Disponível', '2026-10-16 23:40:26'),
+(7, 'Estação Metrópole Ananindeua', 'Rodovia BR-316, Km 4 - Coqueiro, Ananindeua, PA', 120.00, 'CCS2 / CHAdeMO', 1.90, 'Disponível', '2026-10-16 23:40:26'),
+(8, 'Estação Cidade Nova', 'Av. Arterial 18, 400 - Cidade Nova, Ananindeua, PA', 22.00, 'Tipo 2', 1.45, 'Disponível', '2026-10-16 23:40:26'),
+(9, 'Estação Aeroporto Internacional', 'Val-de-Cans - Estacionamento VIP, Belém, PA', 100.00, 'CCS2', 2.30, 'Ocupado', '2026-10-16 23:40:26'),
+(10, 'Estação BRT Augusto Montenegro', 'Av. Augusto Montenegro, Km 8 - Parque Verde, Belém, PA', 90.00, 'CCS2 / Tipo 2', 1.85, 'Disponível', '2026-10-16 23:40:26')
+ON DUPLICATE KEY UPDATE nome = VALUES(nome), endereco = VALUES(endereco), potencia_kw = VALUES(potencia_kw), tipo_conector = VALUES(tipo_conector), preco_kwh = VALUES(preco_kwh), status = VALUES(status), criado_em = VALUES(criado_em);
 
--- 3. Catálogo de Serviços Especializados
-INSERT OR IGNORE INTO servicos (id, titulo, descricao, preco)
-VALUES 
-    (1, 'Instalação de Wallbox Residencial', 'Instalação completa e homologada de carregador até 22kW.', 1200.00),
-    (2, 'Diagnóstico de Bateria de Tração', 'Varredura computadorizada e verificação de degradação das células.', 350.00),
-    (3, 'Manutenção Preventiva de Conectores', 'Inspeção e limpeza técnica dos conectores de carga rápida.', 180.00);
+-- Tabela: veiculos
+INSERT INTO eletrobel_posto.veiculos (id, usuario_id, marca, modelo, placa, ano, tipo_conector, capacidade_bateria_kwh, criado_em) VALUES
+(1, 3, 'byd', 'dolphin', 'HFJKFKFSL', 2026, 'Tipo', 38.00, '2026-10-20 21:41:04'),
+(2, 3, 'gwm', 'Haval', 'BR22FG01', 2025, 'Tipo', 50.00, '2026-10-21 22:48:05')
+ON DUPLICATE KEY UPDATE usuario_id = VALUES(usuario_id), marca = VALUES(marca), modelo = VALUES(modelo), placa = VALUES(placa), ano = VALUES(ano), tipo_conector = VALUES(tipo_conector), capacidade_bateria_kwh = VALUES(capacidade_bateria_kwh), criado_em = VALUES(criado_em);
+
+-- Tabela: servicos
+INSERT INTO eletrobel_posto.servicos (id, titulo, descricao, preco, criado_em) VALUES
+(1, 'Instalação de Wallbox Residencial', 'Instalação completa e homologada de carregador até 22kW.', 1200.00, '2026-10-16 22:51:54'),
+(2, 'Diagnóstico de Bateria de Tração', 'Varredura computadorizada e verificação de degradação das células.', 350.00, '2026-10-16 22:51:54'),
+(3, 'Manutenção Preventiva de Conectores', 'Inspeção e limpeza técnica dos conectores de carga rápida.', 180.00, '2026-10-16 22:51:54')
+ON DUPLICATE KEY UPDATE titulo = VALUES(titulo), descricao = VALUES(descricao), preco = VALUES(preco), criado_em = VALUES(criado_em);

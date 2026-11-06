@@ -1,5 +1,7 @@
+import os
 import customtkinter as ctk
 from tkinter import messagebox
+from PIL import Image
 from database import cadastrar_usuario
 
 # Paleta de cores EletroBel
@@ -36,23 +38,39 @@ def cadastrar(janela, voltar_login):
     )
     card.place(relx=0.5, rely=0.5, anchor="center")
 
-    # Header / Logo
+    # Header / Logo centralizada (LOGO_ELETROBEL_POSTO_NOVO.jpg)
     logo_frame = ctk.CTkFrame(card, fg_color="transparent")
-    logo_frame.pack(pady=(25, 5))
+    logo_frame.pack(fill="x", pady=(20, 6))
 
-    ctk.CTkLabel(
-        logo_frame,
-        text="⚡",
-        font=ctk.CTkFont(size=28, weight="bold"),
-        text_color=COLOR_ACCENT
-    ).pack(side="left", padx=(0, 8))
-
-    ctk.CTkLabel(
-        logo_frame,
-        text="EletroBel",
-        font=ctk.CTkFont(family="Segoe UI", size=24, weight="bold"),
-        text_color=COLOR_TEXT_MAIN
-    ).pack(side="left")
+    logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LOGO_ELETROBEL_POSTO_NOVO.jpg")
+    if os.path.exists(logo_path):
+        try:
+            pil_img = Image.open(logo_path)
+            largura_alvo = 180
+            proporcao = pil_img.height / pil_img.width
+            altura_alvo = int(largura_alvo * proporcao)
+            logo_ctk = ctk.CTkImage(
+                light_image=pil_img,
+                dark_image=pil_img,
+                size=(largura_alvo, altura_alvo),
+            )
+            lbl_logo_img = ctk.CTkLabel(logo_frame, image=logo_ctk, text="")
+            lbl_logo_img.image = logo_ctk
+            lbl_logo_img.pack(anchor="center")
+        except Exception:
+            ctk.CTkLabel(
+                logo_frame,
+                text="⚡ EletroBel",
+                font=ctk.CTkFont(family="Segoe UI", size=24, weight="bold"),
+                text_color=COLOR_ACCENT,
+            ).pack(anchor="center")
+    else:
+        ctk.CTkLabel(
+            logo_frame,
+            text="⚡ EletroBel",
+            font=ctk.CTkFont(family="Segoe UI", size=24, weight="bold"),
+            text_color=COLOR_ACCENT,
+        ).pack(anchor="center")
 
     ctk.CTkLabel(
         card,
