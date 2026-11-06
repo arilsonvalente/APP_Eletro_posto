@@ -122,7 +122,7 @@ def LoginApp(janela, abrir_cadastro, abrir_menu, on_login_sucesso=None):
             )
             return
 
-        # Consulta no banco de dados SQLite
+        # Consulta no banco de dados MySQL
         usuario_autenticado = autenticar_usuario(u, s)
 
         if usuario_autenticado:

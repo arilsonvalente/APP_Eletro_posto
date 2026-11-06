@@ -1,9 +1,16 @@
-import os
-import sys
-import sqlite3
-import time
+"""
+Módulo unificado de Banco de Dados MySQL para o projeto EletroBel Posto.
+Verifica e cria automaticamente o banco de dados `eletrobel_posto` e todas as
+suas tabelas no servidor MySQL (Online Aiven Cloud / Local MySQL), além de
+migrar automaticamente quaisquer registros legados para o MySQL.
+"""
 import hashlib
+import os
+from datetime import date, datetime
 from decimal import Decimal
+
+import mysql.connector
+from mysql.connector import Error, IntegrityError
 
 try:
     from dotenv import load_dotenv
@@ -11,495 +18,425 @@ except ImportError:
     def load_dotenv(*args, **kwargs):
         return False
 
-# Permite localizar mysql-connector-python caso esteja instalado em outra versão do Python na máquina
-try:
-    import mysql.connector
-    from mysql.connector import Error as MysqlError, IntegrityError as MysqlIntegrityError
-    HAS_MYSQL_CONNECTOR = True
-except ImportError:
-    _alt_site = r"C:\Program Files\Python311\Lib\site-packages"
-    if os.path.isdir(_alt_site) and _alt_site not in sys.path:
-        sys.path.append(_alt_site)
-    try:
-        import mysql.connector
-        from mysql.connector import Error as MysqlError, IntegrityError as MysqlIntegrityError
-        HAS_MYSQL_CONNECTOR = True
-    except ImportError:
-        mysql = None
-        MysqlError = Exception
-        MysqlIntegrityError = Exception
-        HAS_MYSQL_CONNECTOR = False
-
-Error = (MysqlError, sqlite3.Error)
-IntegrityError = (MysqlIntegrityError, sqlite3.IntegrityError)
-
+# Diretórios base e carregamento do .env
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BASE_DIR)
 
-# Carrega variáveis de ambiente do arquivo .env (na raiz do projeto ou na pasta do app)
-load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
-load_dotenv(os.path.join(BASE_DIR, ".env"))
+for _env_candidate in (
+    os.path.join(PROJECT_ROOT, ".env"),
+    os.path.join(BASE_DIR, ".env"),
+):
+    if os.path.exists(_env_candidate):
+        load_dotenv(_env_candidate, override=False)
 load_dotenv()
 
-_raw_port = os.getenv("DB_PORT", "27403")
-_default_port = int(_raw_port) if str(_raw_port).strip().isdigit() else 27403
+# Caminhos dos scripts SQL sincronizados com o banco MySQL
+SQL_SCRIPT_PATH = os.path.join(BASE_DIR, "eletrobel_posto.sql")
+BANCO_SQL_PATH = os.path.join(BASE_DIR, "banco_de_dados.sql")
+BANCO_TXT_PATH = os.path.join(BASE_DIR, "banco_de_dados.txt")
+EXTERNAL_SQL_SCRIPT_PATH = os.path.join(
+    os.path.dirname(PROJECT_ROOT),
+    "Banco de Dados",
+    "Banco de Dados Eletrobel_Posto.sql",
+)
 
-# Configurações da conexão online com o banco de dados MySQL (Aiven Cloud)
+_raw_port = os.getenv("DB_PORT", "27403").strip()
+_default_port = int(_raw_port) if _raw_port.isdigit() else 27403
+_raw_host = (os.getenv("DB_HOST") or "arilsonvalente-arilsonvalente-7683.g.aivencloud.com").strip()
+if _raw_host.lower() == "localhost":
+    _raw_host = "127.0.0.1"
+
+# Configuração principal do MySQL (Aiven Cloud / .env)
 DB_CONFIG = {
-    "host": os.getenv("DB_HOST") or "arilsonvalente-arilsonvalente-7683.g.aivencloud.com",
-    "user": os.getenv("DB_USER") or "",
-    "password": os.getenv("DB_PASSWORD") or "",
-    "database": os.getenv("DB_NAME") or "eletrobel_posto",
+    "host": _raw_host,
+    "user": os.getenv("DB_USER"),
+    "password": os.getenv("DB_PASSWORD"),
+    "database": os.getenv("DB_NAME"),
     "port": _default_port,
 }
 
-SQLITE_DB_PATH = os.path.join(BASE_DIR, "eletrobel.db")
-SQL_SCRIPT_PATH = os.path.join(BASE_DIR, "eletrobel_posto.sql")
-EXTERNAL_SQL_SCRIPT_PATH = os.path.abspath(
-    os.path.join(BASE_DIR, "..", "..", "Banco de Dados", "Banco de Dados Eletrobel_Posto.sql")
-)
+# Configuração secundária do MySQL Local (127.0.0.1:3306)
+LOCAL_MYSQL_CONFIG = {
+    "host": os.getenv("LOCAL_DB_HOST"),
+    "user": os.getenv("LOCAL_DB_USER"),
+    "password": os.getenv("LOCAL_DB_PASSWORD"),
+    "database": os.getenv("DB_NAME"),
+    "port": int(os.getenv("LOCAL_DB_PORT"))
+}
 
 
-class _SqliteCursorAdapter:
-    """Adaptador de cursor SQLite compatível com a interface dictionary=True e placeholders %s do MySQL."""
+class _ManagedMySQLConnection:
+    """
+    Wrapper sobre a conexão MySQL persistente para uso com `with conectar() as conn:`.
+    Faz commit ao sair do bloco sem fechar o socket TCP subjacente.
+    """
 
-    def __init__(self, sqlite_conn, dictionary=False):
-        self._cursor = sqlite_conn.cursor()
-        self._dictionary = dictionary
+    def __init__(self, raw_conn):
+        self._raw = raw_conn
 
-    @staticmethod
-    def _adapt_sql(sql: str) -> str:
-         adapted = sql.replace("%s", "?")
-         adapted = adapted.replace("INSERT IGNORE INTO", "INSERT OR IGNORE INTO")
-         return adapted
-
-    def execute(self, sql: str, params=()):
-        return self._cursor.execute(self._adapt_sql(sql), params or ())
-
-    def executemany(self, sql: str, seq_of_params):
-        return self._cursor.executemany(self._adapt_sql(sql), seq_of_params)
-
-    def _convert_row(self, row):
-        if row is None:
-            return None
-        if self._dictionary:
-            return dict(row)
-        return tuple(row)
-
-    def fetchone(self):
-        return self._convert_row(self._cursor.fetchone())
-
-    def fetchall(self):
-        return [self._convert_row(r) for r in self._cursor.fetchall()]
-
-    def close(self):
-        self._cursor.close()
-
-
-class _SqliteConnectionAdapter:
-    """Adaptador de conexão SQLite compatível com a interface de conexão do MySQL."""
-
-    is_sqlite = True
-
-    def __init__(self, db_path: str):
-        self._conn = sqlite3.connect(db_path)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA foreign_keys = ON")
-        self._closed = False
-
-    def cursor(self, dictionary=False):
-        return _SqliteCursorAdapter(self._conn, dictionary=dictionary)
+    def cursor(self, *args, **kwargs):
+        return self._raw.cursor(*args, **kwargs)
 
     def commit(self):
-        self._conn.commit()
+        return self._raw.commit()
 
     def rollback(self):
-        self._conn.rollback()
+        return self._raw.rollback()
 
     def is_connected(self):
-        return not self._closed
-
-    def ping(self, reconnect=True, attempts=1, delay=0):
-        if self._closed:
-            self._conn = sqlite3.connect(SQLITE_DB_PATH)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA foreign_keys = ON")
-            self._closed = False
+        return self._raw.is_connected()
 
     def close(self):
-        if not self._closed:
-            self._conn.close()
-            self._closed = True
-
-
-# =====================================================================
-# CLASSE DE CONEXÃO UNIFICADA (ANTIGO conecta_database.py)
-# =====================================================================
-
-class _ConexaoPersistenteContext:
-    """Context manager que reutiliza a conexão MySQL ativa sem fechá-la a cada consulta."""
-
-    def __init__(self, db_instance):
-        self.db_instance = db_instance
-        self.conn = None
+        try:
+            self._raw.commit()
+        except Exception:
+            pass
 
     def __enter__(self):
-        self.conn = self.db_instance.obter_conexao()
-        return self.conn
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.conn and self.conn.is_connected():
+        if exc_type is None:
             try:
-                if exc_type is None:
-                    self.conn.commit()
-                else:
-                    self.conn.rollback()
-            except Error:
+                self._raw.commit()
+            except Exception:
+                pass
+        else:
+            try:
+                self._raw.rollback()
+            except Exception:
                 pass
         return False
 
 
 class Database:
-    """Gerencia a conexão persistente com o banco de dados MySQL (ou fallback local SQLite) do EletroBel Posto."""
+    """
+    Classe gerenciadora de conexão com o Banco de Dados MySQL.
+    Verifica se o banco `eletrobel_posto` existe e o cria automaticamente caso não exista.
+    """
 
-    def __init__(
-        self,
-        host=None,
-        user=None,
-        password=None,
-        database=None,
-        port=None,
-    ):
-        raw_host = host if host is not None else DB_CONFIG["host"]
-        self.host = "127.0.0.1" if raw_host == "localhost" else raw_host
+    def __init__(self, host=None, user=None, password=None, database=None, port=None):
+        raw_h = host if host is not None else DB_CONFIG["host"]
+        if isinstance(raw_h, str) and raw_h.strip().lower() == "localhost":
+            raw_h = "127.0.0.1"
+        self.host = raw_h
         self.user = user if user is not None else DB_CONFIG["user"]
         self.password = password if password is not None else DB_CONFIG["password"]
         self.database = database if database is not None else DB_CONFIG["database"]
-        raw_port = port if port is not None else DB_CONFIG["port"]
-        self.port = int(raw_port) if str(raw_port).strip().isdigit() else 27403
-        self.conexao = None
-        self.usando_sqlite = False
+        self.port = int(port if port is not None else DB_CONFIG["port"])
+        self.connection = None
+        self.modo = None
+        self.ultimo_erro_mysql = None
 
-    def criar_banco_se_nao_existir(self):
-        """Garante que o banco de dados exista no servidor MySQL antes de conectar."""
-        if not HAS_MYSQL_CONNECTOR:
-            return False
+    def _conectar_servidor_mysql(self, cfg, timeout=6):
+        """
+        Conecta a um servidor MySQL e garante que o banco de dados exista
+        (`CREATE DATABASE IF NOT EXISTS`).
+        """
+        host = "127.0.0.1" if str(cfg["host"]).strip().lower() == "localhost" else cfg["host"]
+        port = int(cfg["port"])
+        user = cfg["user"]
+        password = cfg["password"]
+        database = cfg["database"]
+
+        base_params = {
+            "host": host,
+            "user": user,
+            "password": password,
+            "port": port,
+            "connection_timeout": timeout,
+            "charset": "utf8mb4",
+            "use_unicode": True,
+            "autocommit": False,
+            "use_pure": True,
+        }
+
         try:
-            conn_temp = mysql.connector.connect(
-                host=self.host,
-                user=self.user,
-                password=self.password,
-                port=self.port,
-                use_pure=True,
-                connection_timeout=15,
-            )
-            cursor = conn_temp.cursor()
-            cursor.execute(
-                f"CREATE DATABASE IF NOT EXISTS `{self.database}` "
-                "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-            )
-            conn_temp.commit()
-            cursor.close()
-            conn_temp.close()
-            return True
-        except Error as e:
-            print(f"[ERRO] Erro ao verificar/criar base de dados MySQL: {e}")
-            return False
+            conn = mysql.connector.connect(database=database, **base_params)
+            return conn
+        except Error as err:
+            # 1049 = Unknown database -> cria o banco automaticamente no MySQL
+            if getattr(err, "errno", None) == 1049:
+                tmp_conn = mysql.connector.connect(**base_params)
+                cursor = tmp_conn.cursor()
+                cursor.execute(
+                    f"CREATE DATABASE IF NOT EXISTS `{database}` "
+                    "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+                )
+                tmp_conn.commit()
+                cursor.close()
+                tmp_conn.close()
+                return mysql.connector.connect(database=database, **base_params)
+            raise
 
     def conectar(self):
-        """Estabelece e retorna a conexão ativa com o banco de dados MySQL (ou SQLite local caso offline/sem .env)."""
-        if self.conexao is not None and self.conexao.is_connected():
+        """Estabelece ou reutiliza a conexão ativa com o banco de dados MySQL."""
+        if self.connection is not None:
             try:
-                self.conexao.ping(reconnect=True, attempts=2, delay=1)
-                return self.conexao
-            except Error:
-                self.conexao = None
-
-        if HAS_MYSQL_CONNECTOR and self.host and self.user and self.password:
-            ultimo_erro = None
-            for tentativa in range(1, 3):
+                if self.connection.is_connected():
+                    self.connection.ping(reconnect=True, attempts=2, delay=1)
+                    return _ManagedMySQLConnection(self.connection)
+            except Exception:
                 try:
-                    self.conexao = mysql.connector.connect(
-                        host=self.host,
-                        user=self.user,
-                        password=self.password,
-                        database=self.database,
-                        port=self.port,
-                        charset="utf8mb4",
-                        use_unicode=True,
-                        autocommit=False,
-                        use_pure=True,
-                        connection_timeout=8,
-                    )
-                    if self.conexao.is_connected():
-                        self.usando_sqlite = False
-                        return self.conexao
-                except Error as e:
-                    ultimo_erro = e
-                    # Erro 1049 = Unknown database: cria automaticamente o banco no MySQL
-                    if getattr(e, "errno", None) == 1049:
-                        if self.criar_banco_se_nao_existir():
-                            continue
-                    if tentativa < 2:
-                        time.sleep(0.5)
-            print(f"[AVISO] Não foi possível conectar ao MySQL ({ultimo_erro}). Utilizando banco local SQLite.")
+                    self.connection.close()
+                except Exception:
+                    pass
+                self.connection = None
 
-        self.conexao = _SqliteConnectionAdapter(SQLITE_DB_PATH)
-        self.usando_sqlite = True
-        return self.conexao
+        candidatos = []
+        if self.host and self.user is not None:
+            candidatos.append(
+                (
+                    "mysql_principal",
+                    {
+                        "host": self.host,
+                        "user": self.user,
+                        "password": self.password,
+                        "database": self.database,
+                        "port": self.port,
+                    },
+                    6,
+                )
+            )
 
-    def obter_conexao(self):
-        """Retorna a conexão persistente ativa, reconectando se necessário."""
-        return self.conectar()
+        # Fallback automático para o servidor MySQL local (127.0.0.1:3306)
+        if (self.host, self.port) != (LOCAL_MYSQL_CONFIG["host"], LOCAL_MYSQL_CONFIG["port"]):
+            candidatos.append(("mysql_local", LOCAL_MYSQL_CONFIG, 4))
+
+        erros = []
+        for modo_nome, cfg, timeout in candidatos:
+            try:
+                self.connection = self._conectar_servidor_mysql(cfg, timeout=timeout)
+                self.modo = "mysql"
+                self.ultimo_erro_mysql = None
+                return _ManagedMySQLConnection(self.connection)
+            except Exception as e:
+                erros.append(f"{cfg['host']}:{cfg['port']} -> {e}")
+
+        self.ultimo_erro_mysql = " | ".join(erros)
+        raise RuntimeError(f"Não foi possível conectar ao servidor MySQL: {self.ultimo_erro_mysql}")
 
     def desconectar(self):
-        """Encerra a conexão com o banco de forma segura."""
-        if self.conexao and self.conexao.is_connected():
+        """Encerra a conexão MySQL ativa."""
+        if self.connection is not None:
             try:
-                self.conexao.close()
-            except Error:
+                if self.connection.is_connected():
+                    self.connection.close()
+            except Exception:
                 pass
-            self.conexao = None
+            finally:
+                self.connection = None
+
+    def executar_query(self, query, params=None):
+        """Executa comandos de modificação (INSERT, UPDATE, DELETE, CREATE) no MySQL."""
+        conn = self.conectar()
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            cursor.execute(query, params or ())
+            conn.commit()
+            return cursor
+        except Error as e:
+            conn.rollback()
+            raise e
+        finally:
+            if cursor:
+                cursor.close()
+
+    def buscar_dados(self, query, params=None):
+        """Executa consultas (SELECT) no MySQL e retorna lista de dicionários."""
+        conn = self.conectar()
+        cursor = None
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(query, params or ())
+            return [_normalizar_linha(r) for r in cursor.fetchall()]
+        finally:
+            if cursor:
+                cursor.close()
 
 
-# Instância global persistente para evitar múltiplas aberturas de socket TLS seguidas
+# Instância global compartilhada
 _db_global = Database()
 
 
 def conectar():
-    """Retorna um gerenciador de contexto com a conexão MySQL online reutilizável."""
-    return _ConexaoPersistenteContext(_db_global)
+    """Retorna uma conexão ativa com o banco de dados MySQL."""
+    return _db_global.conectar()
 
 
 def verificar_conexao():
-    """Testa a conexão com o banco de dados e retorna (sucesso: bool, mensagem: str)."""
+    """
+    Testa a conexão com o MySQL e retorna uma tupla (sucesso: bool, detalhes: str).
+    """
     try:
         with conectar() as conn:
-            if getattr(conn, "is_sqlite", False):
-                return True, f"Conectado ao banco local SQLite ({SQLITE_DB_PATH})"
             cursor = conn.cursor()
-            cursor.execute("SELECT DATABASE(), VERSION()")
-            db_atual, versao = cursor.fetchone()
+            cursor.execute("SELECT VERSION(), DATABASE(), CURRENT_USER()")
+            versao, banco_atual, usuario_atual = cursor.fetchone()
             cursor.close()
-            msg = f"Conectado ao MySQL {versao} | Banco: {db_atual} ({_db_global.host}:{_db_global.port})"
-            return True, msg
+            host_ativo = _db_global.connection.server_host if _db_global.connection else _db_global.host
+            porta_ativa = _db_global.connection.server_port if _db_global.connection else _db_global.port
+            return (
+                True,
+                f"Conectado ao MySQL {versao} em {host_ativo}:{porta_ativa} "
+                f"| Banco: '{banco_atual}' | Usuário: '{usuario_atual}'",
+            )
     except Exception as e:
-        return False, f"Falha na conexão com o banco de dados: {e}"
-
-
-def _normalizar_linha(row: dict) -> dict:
-    """Converte objetos Decimal do MySQL para float mantendo compatibilidade com a interface."""
-    if not row:
-        return row
-    normalizado = {}
-    for k, v in row.items():
-        if isinstance(v, Decimal):
-            normalizado[k] = float(v)
-        else:
-            normalizado[k] = v
-    return normalizado
+        return False, f"Falha na conexão com o MySQL: {e}"
 
 
 def hash_senha(senha: str) -> str:
-    """Gera um hash SHA-256 da senha para armazenamento seguro."""
+    """Gera um hash SHA-256 seguro para armazenar senhas."""
     return hashlib.sha256(senha.encode("utf-8")).hexdigest()
 
 
-def inicializar_banco(exportar_sql: bool = False):
-    """Cria todas as tabelas necessárias no banco de dados e popula dados iniciais caso esteja vazio."""
-    with conectar() as conn:
-        cursor = conn.cursor(dictionary=True)
-
-        if getattr(conn, "is_sqlite", False):
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS usuarios (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    nome TEXT NOT NULL,
-                    email TEXT UNIQUE NOT NULL,
-                    usuario TEXT UNIQUE NOT NULL,
-                    senha TEXT NOT NULL,
-                    tipo TEXT DEFAULT 'cliente',
-                    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS veiculos (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    usuario_id INTEGER NOT NULL,
-                    marca TEXT NOT NULL,
-                    modelo TEXT NOT NULL,
-                    placa TEXT UNIQUE NOT NULL,
-                    ano INTEGER,
-                    tipo_conector TEXT NOT NULL,
-                    capacidade_bateria_kwh REAL,
-                    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (usuario_id) REFERENCES usuarios (id) ON DELETE CASCADE
-                )
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS estacoes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    nome TEXT NOT NULL,
-                    endereco TEXT NOT NULL,
-                    potencia_kw REAL NOT NULL,
-                    tipo_conector TEXT NOT NULL,
-                    preco_kwh REAL NOT NULL,
-                    status TEXT DEFAULT 'Disponível',
-                    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS recargas (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    usuario_id INTEGER NOT NULL,
-                    estacao_id INTEGER NOT NULL,
-                    veiculo_id INTEGER NULL,
-                    data_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    data_fim TIMESTAMP NULL,
-                    energia_kwh REAL DEFAULT 0.00,
-                    valor_total REAL DEFAULT 0.00,
-                    status TEXT DEFAULT 'Em andamento',
-                    FOREIGN KEY (usuario_id) REFERENCES usuarios (id) ON DELETE CASCADE,
-                    FOREIGN KEY (estacao_id) REFERENCES estacoes (id) ON DELETE CASCADE,
-                    FOREIGN KEY (veiculo_id) REFERENCES veiculos (id) ON DELETE SET NULL
-                )
-            """)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS servicos (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    titulo TEXT NOT NULL,
-                    descricao TEXT,
-                    preco REAL,
-                    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+def _normalizar_linha(row: dict) -> dict:
+    """Converte tipos Decimal e datetime do MySQL para tipos nativos (float / str)."""
+    if not row:
+        return None
+    normalizado = {}
+    for chave, valor in row.items():
+        if isinstance(valor, Decimal):
+            normalizado[chave] = float(valor)
+        elif isinstance(valor, (datetime, date)):
+            normalizado[chave] = valor.strftime("%Y-%m-%d %H:%M:%S")
         else:
-            # 1. Tabela de Usuários
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS usuarios (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    nome VARCHAR(150) NOT NULL,
-                    email VARCHAR(255) UNIQUE NOT NULL,
-                    usuario VARCHAR(50) UNIQUE NOT NULL,
-                    senha VARCHAR(255) NOT NULL,
-                    tipo ENUM('cliente', 'admin') DEFAULT 'cliente',
-                    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-
-            # 2. Tabela de Veículos
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS veiculos (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    usuario_id INT NOT NULL,
-                    marca VARCHAR(50) NOT NULL,
-                    modelo VARCHAR(50) NOT NULL,
-                    placa VARCHAR(10) UNIQUE NOT NULL,
-                    ano INT,
-                    tipo_conector VARCHAR(30) NOT NULL,
-                    capacidade_bateria_kwh DECIMAL(6, 2),
-                    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    CONSTRAINT fk_veiculos_usuario
-                        FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
-                        ON DELETE CASCADE
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-
-            # 3. Tabela de Estações de Recarga
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS estacoes (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    nome VARCHAR(100) NOT NULL,
-                    endereco VARCHAR(255) NOT NULL,
-                    potencia_kw DECIMAL(6, 2) NOT NULL,
-                    tipo_conector VARCHAR(30) NOT NULL,
-                    preco_kwh DECIMAL(8, 2) NOT NULL,
-                    status ENUM('Disponível', 'Ocupado', 'Manutenção') DEFAULT 'Disponível',
-                    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-
-            # 4. Tabela de Histórico de Recargas
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS recargas (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    usuario_id INT NOT NULL,
-                    estacao_id INT NOT NULL,
-                    veiculo_id INT NULL,
-                    data_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    data_fim TIMESTAMP NULL,
-                    energia_kwh DECIMAL(8, 2) DEFAULT 0.00,
-                    valor_total DECIMAL(10, 2) DEFAULT 0.00,
-                    status ENUM('Em andamento', 'Concluída', 'Cancelada') DEFAULT 'Em andamento',
-                    CONSTRAINT fk_recargas_usuario
-                        FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
-                        ON DELETE CASCADE,
-                    CONSTRAINT fk_recargas_estacao
-                        FOREIGN KEY (estacao_id) REFERENCES estacoes (id)
-                        ON DELETE CASCADE,
-                    CONSTRAINT fk_recargas_veiculo
-                        FOREIGN KEY (veiculo_id) REFERENCES veiculos (id)
-                        ON DELETE SET NULL
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-
-            # 5. Tabela de Serviços e Manutenções
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS servicos (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    titulo VARCHAR(150) NOT NULL,
-                    descricao TEXT,
-                    preco DECIMAL(10, 2),
-                    criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-
-        conn.commit()
-
-        # Popula dados iniciais se necessário
-        _popular_dados_iniciais(cursor, conn)
-        cursor.close()
-
-    if _db_global.usando_sqlite:
-        print(f"[OK] Banco de dados local SQLite inicializado ({SQLITE_DB_PATH})")
-    else:
-        print(f"[OK] Conectado ao banco de dados MySQL online ({_db_global.host}:{_db_global.port}/{_db_global.database})")
-    if exportar_sql:
-        atualizar_arquivo_sql()
+            normalizado[chave] = valor
+    return normalizado
 
 
-def _popular_dados_iniciais(cursor, conn):
-    """Insere dados de exemplo e usuários iniciais se a tabela estiver vazia."""
+def _criar_tabelas_mysql(cursor):
+    """Cria todas as tabelas do sistema no MySQL caso ainda não existam."""
+    # 1. Tabela de Usuários
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(150) NOT NULL,
+            email VARCHAR(255) UNIQUE NOT NULL,
+            usuario VARCHAR(50) UNIQUE NOT NULL,
+            senha VARCHAR(255) NOT NULL,
+            tipo ENUM('cliente', 'admin') DEFAULT 'cliente',
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    """)
 
-    # 1. Usuário Administrador padrão (admin / 123)
-    cursor.execute("SELECT id FROM usuarios WHERE usuario = %s", ("admin",))
-    if not cursor.fetchone():
-        senha_admin = hash_senha("123")
-        cursor.execute("""
+    # 2. Tabela de Veículos
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS veiculos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            usuario_id INT NOT NULL,
+            marca VARCHAR(50) NOT NULL,
+            modelo VARCHAR(50) NOT NULL,
+            placa VARCHAR(10) UNIQUE NOT NULL,
+            ano INT,
+            tipo_conector VARCHAR(30) NOT NULL,
+            capacidade_bateria_kwh DECIMAL(6, 2),
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT fk_veiculos_usuario FOREIGN KEY (usuario_id)
+                REFERENCES usuarios (id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    """)
+
+    # 3. Tabela de Estações de Recarga
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS estacoes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(100) NOT NULL,
+            endereco VARCHAR(255) NOT NULL,
+            potencia_kw DECIMAL(6, 2) NOT NULL,
+            tipo_conector VARCHAR(30) NOT NULL,
+            preco_kwh DECIMAL(8, 2) NOT NULL,
+            status ENUM('Disponível', 'Ocupado', 'Manutenção') DEFAULT 'Disponível',
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    """)
+
+    # 4. Tabela de Histórico de Recargas
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS recargas (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            usuario_id INT NOT NULL,
+            estacao_id INT NOT NULL,
+            veiculo_id INT NULL,
+            data_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            data_fim TIMESTAMP NULL,
+            energia_kwh DECIMAL(8, 2) DEFAULT 0.00,
+            valor_total DECIMAL(10, 2) DEFAULT 0.00,
+            status ENUM('Em andamento', 'Concluída', 'Cancelada') DEFAULT 'Em andamento',
+            CONSTRAINT fk_recargas_usuario FOREIGN KEY (usuario_id)
+                REFERENCES usuarios (id) ON DELETE CASCADE,
+            CONSTRAINT fk_recargas_estacao FOREIGN KEY (estacao_id)
+                REFERENCES estacoes (id) ON DELETE CASCADE,
+            CONSTRAINT fk_recargas_veiculo FOREIGN KEY (veiculo_id)
+                REFERENCES veiculos (id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    """)
+
+    # 5. Tabela de Serviços e Manutenções
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS servicos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            titulo VARCHAR(150) NOT NULL,
+            descricao TEXT,
+            preco DECIMAL(10, 2),
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    """)
+
+    # Garante compatibilidade de colunas na tabela recargas (migração de horario_inicio -> data_inicio)
+    cursor.execute("SHOW COLUMNS FROM recargas")
+    colunas_recargas = {row["Field"] if isinstance(row, dict) else row[0] for row in cursor.fetchall()}
+    if "horario_inicio" in colunas_recargas and "data_inicio" not in colunas_recargas:
+        cursor.execute("ALTER TABLE recargas CHANGE COLUMN horario_inicio data_inicio TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    if "horario_final" in colunas_recargas and "data_fim" not in colunas_recargas:
+        cursor.execute("ALTER TABLE recargas CHANGE COLUMN horario_final data_fim TIMESTAMP NULL")
+
+
+def _popular_dados_iniciais(conn, cursor):
+    """Insere os dados iniciais (seed) no MySQL caso as tabelas estejam vazias."""
+    # 1. Usuários iniciais
+    cursor.execute("SELECT COUNT(*) as total FROM usuarios")
+    row_user = cursor.fetchone()
+    total_usuarios = row_user["total"] if isinstance(row_user, dict) else (row_user[0] if row_user else 0)
+
+    if total_usuarios == 0:
+        usuarios_iniciais = [
+            (
+                1,
+                "Administrador EletroBel",
+                "admin@eletrobel.com",
+                "admin",
+                "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3",
+                "admin",
+                "2026-10-16 22:51:54",
+            ),
+            (
+                3,
+                "arilson",
+                "arilsonvalente@gmail.com",
+                "arilsonvalente",
+                "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+                "cliente",
+                "2026-10-16 23:23:22",
+            ),
+        ]
+        cursor.executemany(
+            """
             INSERT INTO usuarios (id, nome, email, usuario, senha, tipo, criado_em)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (1, "Administrador EletroBel", "admin@eletrobel.com", "admin", senha_admin, "admin", "2026-10-16 22:51:54"))
+            ON DUPLICATE KEY UPDATE
+                nome = VALUES(nome),
+                email = VALUES(email),
+                tipo = VALUES(tipo)
+            """,
+            usuarios_iniciais,
+        )
 
-    # Usuário local existente (arilsonvalente)
-    cursor.execute("SELECT id FROM usuarios WHERE usuario = %s", ("arilsonvalente",))
-    if not cursor.fetchone():
-        cursor.execute("""
-            INSERT IGNORE INTO usuarios (id, nome, email, usuario, senha, tipo, criado_em)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (
-            3,
-            "arilson",
-            "arilsonvalente@gmail.com",
-            "arilsonvalente",
-            "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
-            "cliente",
-            "2026-10-16 23:23:22",
-        ))
-
-    # 2. Estações de Recarga iniciais (Belém, Ananindeua e Região Metropolitana)
+    # 2. Estações de recarga iniciais
     cursor.execute("SELECT COUNT(*) as total FROM estacoes")
     row_est = cursor.fetchone()
-    total_estacoes = row_est["total"] if row_est else 0
+    total_estacoes = row_est["total"] if isinstance(row_est, dict) else (row_est[0] if row_est else 0)
 
     if total_estacoes == 0:
         estacoes_iniciais = [
@@ -510,15 +447,49 @@ def _popular_dados_iniciais(cursor, conn):
             (9, "Estação Aeroporto Internacional", "Val-de-Cans - Estacionamento VIP, Belém, PA", 100.0, "CCS2", 2.30, "Ocupado", "2026-10-16 23:40:26"),
             (10, "Estação BRT Augusto Montenegro", "Av. Augusto Montenegro, Km 8 - Parque Verde, Belém, PA", 90.0, "CCS2 / Tipo 2", 1.85, "Disponível", "2026-10-16 23:40:26"),
         ]
-        cursor.executemany("""
+        cursor.executemany(
+            """
             INSERT INTO estacoes (id, nome, endereco, potencia_kw, tipo_conector, preco_kwh, status, criado_em)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """, estacoes_iniciais)
+            ON DUPLICATE KEY UPDATE
+                nome = VALUES(nome),
+                endereco = VALUES(endereco),
+                potencia_kw = VALUES(potencia_kw),
+                tipo_conector = VALUES(tipo_conector),
+                preco_kwh = VALUES(preco_kwh),
+                status = VALUES(status)
+            """,
+            estacoes_iniciais,
+        )
 
-    # 3. Serviços iniciais
+    # 3. Veículos iniciais
+    cursor.execute("SELECT COUNT(*) as total FROM veiculos")
+    row_veic = cursor.fetchone()
+    total_veiculos = row_veic["total"] if isinstance(row_veic, dict) else (row_veic[0] if row_veic else 0)
+
+    if total_veiculos == 0:
+        veiculos_iniciais = [
+            (1, 3, "byd", "dolphin", "HFJKFKFSL", 2026, "Tipo", 38.00, "2026-10-20 21:41:04"),
+            (2, 3, "gwm", "Haval", "BR22FG01", 2025, "Tipo", 50.00, "2026-10-21 22:48:05"),
+        ]
+        cursor.executemany(
+            """
+            INSERT INTO veiculos (id, usuario_id, marca, modelo, placa, ano, tipo_conector, capacidade_bateria_kwh, criado_em)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                marca = VALUES(marca),
+                modelo = VALUES(modelo),
+                ano = VALUES(ano),
+                tipo_conector = VALUES(tipo_conector),
+                capacidade_bateria_kwh = VALUES(capacidade_bateria_kwh)
+            """,
+            veiculos_iniciais,
+        )
+
+    # 4. Serviços iniciais
     cursor.execute("SELECT COUNT(*) as total FROM servicos")
     row_serv = cursor.fetchone()
-    total_servicos = row_serv["total"] if row_serv else 0
+    total_servicos = row_serv["total"] if isinstance(row_serv, dict) else (row_serv[0] if row_serv else 0)
 
     if total_servicos == 0:
         servicos_iniciais = [
@@ -526,12 +497,58 @@ def _popular_dados_iniciais(cursor, conn):
             (2, "Diagnóstico de Bateria de Tração", "Varredura computadorizada e verificação de degradação das células.", 350.00, "2026-10-16 22:51:54"),
             (3, "Manutenção Preventiva de Conectores", "Inspeção e limpeza técnica dos conectores de carga rápida.", 180.00, "2026-10-16 23:40:26"),
         ]
-        cursor.executemany("""
+        cursor.executemany(
+            """
             INSERT INTO servicos (id, titulo, descricao, preco, criado_em)
             VALUES (%s, %s, %s, %s, %s)
-        """, servicos_iniciais)
+            ON DUPLICATE KEY UPDATE
+                titulo = VALUES(titulo),
+                descricao = VALUES(descricao),
+                preco = VALUES(preco)
+            """,
+            servicos_iniciais,
+        )
 
     conn.commit()
+
+
+def sincronizar_servidores_mysql():
+    """
+    Garante que tanto o MySQL Online (Aiven Cloud) quanto o MySQL Local (127.0.0.1:3306),
+    quando acessíveis, tenham o banco `eletrobel_posto` criado e todos os registros sincronizados.
+    """
+    for cfg in (DB_CONFIG, LOCAL_MYSQL_CONFIG):
+        try:
+            db_temp = Database(
+                host=cfg["host"],
+                user=cfg["user"],
+                password=cfg["password"],
+                database=cfg["database"],
+                port=cfg["port"],
+            )
+            conn = db_temp._conectar_servidor_mysql(cfg, timeout=5)
+            cur = conn.cursor(dictionary=True)
+            _criar_tabelas_mysql(cur)
+            _popular_dados_iniciais(conn, cur)
+            cur.close()
+            conn.close()
+        except Exception:
+            pass
+
+
+def inicializar_banco(exportar_sql: bool = False):
+    """
+    Verifica se o banco de dados MySQL (`eletrobel_posto`) e todas as tabelas existem;
+    caso não existam, cria automaticamente e popula os dados iniciais.
+    """
+    with conectar() as conn:
+        cursor = conn.cursor(dictionary=True)
+        _criar_tabelas_mysql(cursor)
+        _popular_dados_iniciais(conn, cursor)
+        cursor.close()
+
+    if exportar_sql:
+        atualizar_arquivo_sql()
 
 
 def _sql_val(v):
@@ -545,14 +562,21 @@ def _sql_val(v):
 
 
 def atualizar_arquivo_sql():
-    """Exporta a estrutura e os dados atuais do banco para o arquivo eletrobel_posto.sql."""
+    """
+    Exporta a estrutura e os dados atuais do banco MySQL para os arquivos SQL do projeto:
+    - eletrobel_posto.sql
+    - banco_de_dados.sql
+    - banco_de_dados.txt
+    - Banco de Dados/Banco de Dados Eletrobel_Posto.sql
+    """
     try:
         with conectar() as conn:
             cursor = conn.cursor(dictionary=True)
 
             linhas = [
                 "-- =====================================================================",
-                "-- SCRIPT SQL ATUALIZADO COM O BANCO DE DADOS - ELETROBEL POSTO",
+                "-- SCRIPT SQL MYSQL ATUALIZADO COM O BANCO DE DADOS - ELETROBEL POSTO",
+                "-- Banco de Dados: MySQL (eletrobel_posto)",
                 "-- =====================================================================",
                 "",
                 "CREATE DATABASE IF NOT EXISTS eletrobel_posto",
@@ -628,7 +652,7 @@ def atualizar_arquivo_sql():
                 ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;",
                 "",
                 "-- =====================================================================",
-                "-- DADOS DO BANCO DE DADOS",
+                "-- DADOS DO BANCO DE DADOS MYSQL",
                 "-- =====================================================================",
             ]
 
@@ -662,8 +686,9 @@ def atualizar_arquivo_sql():
                 )
 
             conteudo_sql = "\n".join(linhas) + "\n"
-            with open(SQL_SCRIPT_PATH, "w", encoding="utf-8") as f:
-                f.write(conteudo_sql)
+            for caminho in (SQL_SCRIPT_PATH, BANCO_SQL_PATH, BANCO_TXT_PATH):
+                with open(caminho, "w", encoding="utf-8") as f:
+                    f.write(conteudo_sql)
 
             if os.path.exists(os.path.dirname(EXTERNAL_SQL_SCRIPT_PATH)):
                 with open(EXTERNAL_SQL_SCRIPT_PATH, "w", encoding="utf-8") as f:
@@ -699,10 +724,13 @@ def cadastrar_usuario(nome: str, email: str, usuario: str, senha: str, tipo: str
     try:
         with conectar() as conn:
             cursor = conn.cursor(dictionary=True)
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO usuarios (nome, email, usuario, senha, tipo)
                 VALUES (%s, %s, %s, %s, %s)
-            """, (nome, email, usuario, senha_cripto, tipo))
+                """,
+                (nome, email, usuario, senha_cripto, tipo),
+            )
             conn.commit()
             cursor.close()
         atualizar_arquivo_sql()
@@ -728,11 +756,14 @@ def autenticar_usuario(usuario: str, senha: str):
 
     with conectar() as conn:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT id, nome, email, usuario, tipo, criado_em
             FROM usuarios
             WHERE usuario = %s AND senha = %s
-        """, (usuario, senha_cripto))
+            """,
+            (usuario, senha_cripto),
+        )
         row = cursor.fetchone()
         cursor.close()
         if row:
@@ -741,7 +772,7 @@ def autenticar_usuario(usuario: str, senha: str):
 
 
 def listar_usuarios():
-    """Retorna a lista de todos os usuários cadastrados."""
+    """Retorna a lista de todos os usuários cadastrados no MySQL."""
     with conectar() as conn:
         cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT id, nome, email, usuario, tipo, criado_em FROM usuarios ORDER BY id DESC")
@@ -751,7 +782,7 @@ def listar_usuarios():
 
 
 def obter_usuario_por_id(usuario_id: int):
-    """Retorna os dados cadastrais atualizados de um usuário pelo ID."""
+    """Retorna os dados cadastrais atualizados de um usuário pelo ID no MySQL."""
     with conectar() as conn:
         cursor = conn.cursor(dictionary=True)
         cursor.execute(
@@ -764,17 +795,20 @@ def obter_usuario_por_id(usuario_id: int):
 
 
 def obter_resumo_usuario(usuario_id: int):
-    """Retorna estatísticas do usuário: total de recargas, kWh consumidos, valor investido e qtd de veículos."""
+    """Retorna estatísticas do usuário no MySQL: total de recargas, kWh consumidos, valor investido e qtd de veículos."""
     with conectar() as conn:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT 
                 COUNT(*) as total_recargas,
                 COALESCE(SUM(energia_kwh), 0.0) as total_kwh,
                 COALESCE(SUM(valor_total), 0.0) as total_valor
             FROM recargas
             WHERE usuario_id = %s
-        """, (usuario_id,))
+            """,
+            (usuario_id,),
+        )
         row_rec = cursor.fetchone()
         res = {
             "total_recargas": int(row_rec["total_recargas"]) if row_rec else 0,
@@ -795,7 +829,7 @@ def obter_resumo_usuario(usuario_id: int):
 # =====================================================================
 
 def listar_estacoes():
-    """Retorna todas as estações de recarga cadastradas."""
+    """Retorna todas as estações de recarga cadastradas no MySQL."""
     with conectar() as conn:
         cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT * FROM estacoes ORDER BY id ASC")
@@ -805,14 +839,17 @@ def listar_estacoes():
 
 
 def cadastrar_estacao(nome: str, endereco: str, potencia_kw: float, tipo_conector: str, preco_kwh: float, status: str = "Disponível"):
-    """Adiciona uma nova estação de recarga."""
+    """Adiciona uma nova estação de recarga no MySQL."""
     try:
         with conectar() as conn:
             cursor = conn.cursor(dictionary=True)
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO estacoes (nome, endereco, potencia_kw, tipo_conector, preco_kwh, status)
                 VALUES (%s, %s, %s, %s, %s, %s)
-            """, (nome, endereco, potencia_kw, tipo_conector, preco_kwh, status))
+                """,
+                (nome, endereco, potencia_kw, tipo_conector, preco_kwh, status),
+            )
             conn.commit()
             cursor.close()
         atualizar_arquivo_sql()
@@ -823,7 +860,7 @@ def cadastrar_estacao(nome: str, endereco: str, potencia_kw: float, tipo_conecto
 
 def buscar_estacoes(cidade: str = None, apenas_rapida: bool = False):
     """
-    Retorna estações filtradas por cidade (Belém, Ananindeua, Região Metropolitana)
+    Retorna estações do MySQL filtradas por cidade (Belém, Ananindeua, Região Metropolitana)
     e opcionalmente apenas com Carga Rápida (DC >= 50kW).
     """
     with conectar() as conn:
@@ -864,14 +901,17 @@ def buscar_estacoes(cidade: str = None, apenas_rapida: bool = False):
 # =====================================================================
 
 def cadastrar_veiculo(usuario_id: int, marca: str, modelo: str, placa: str, ano: int, tipo_conector: str, capacidade_bateria_kwh: float):
-    """Cadastra um novo veículo vinculado a um usuário."""
+    """Cadastra um novo veículo vinculado a um usuário no MySQL."""
     try:
         with conectar() as conn:
             cursor = conn.cursor(dictionary=True)
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO veiculos (usuario_id, marca, modelo, placa, ano, tipo_conector, capacidade_bateria_kwh)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (usuario_id, marca, modelo, placa.upper().strip(), ano, tipo_conector, capacidade_bateria_kwh))
+                """,
+                (usuario_id, marca, modelo, placa.upper().strip(), ano, tipo_conector, capacidade_bateria_kwh),
+            )
             conn.commit()
             cursor.close()
         atualizar_arquivo_sql()
@@ -883,18 +923,20 @@ def cadastrar_veiculo(usuario_id: int, marca: str, modelo: str, placa: str, ano:
 
 
 def listar_veiculos(usuario_id: int = None):
-    """Lista os veículos de um usuário específico ou todos os veículos."""
+    """Lista os veículos de um usuário específico ou todos os veículos no MySQL."""
     with conectar() as conn:
         cursor = conn.cursor(dictionary=True)
         if usuario_id:
             cursor.execute("SELECT * FROM veiculos WHERE usuario_id = %s ORDER BY id DESC", (usuario_id,))
         else:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT v.*, u.nome as proprietario
                 FROM veiculos v
                 JOIN usuarios u ON v.usuario_id = u.id
                 ORDER BY v.id DESC
-            """)
+                """
+            )
         rows = [_normalizar_linha(row) for row in cursor.fetchall()]
         cursor.close()
         return rows
@@ -905,14 +947,17 @@ def listar_veiculos(usuario_id: int = None):
 # =====================================================================
 
 def registrar_recarga(usuario_id: int, estacao_id: int, veiculo_id: int, energia_kwh: float, valor_total: float, status: str = "Concluída"):
-    """Registra uma sessão de recarga."""
+    """Registra uma sessão de recarga no MySQL."""
     try:
         with conectar() as conn:
             cursor = conn.cursor(dictionary=True)
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO recargas (usuario_id, estacao_id, veiculo_id, energia_kwh, valor_total, status)
                 VALUES (%s, %s, %s, %s, %s, %s)
-            """, (usuario_id, estacao_id, veiculo_id, energia_kwh, valor_total, status))
+                """,
+                (usuario_id, estacao_id, veiculo_id, energia_kwh, valor_total, status),
+            )
             conn.commit()
             cursor.close()
         atualizar_arquivo_sql()
@@ -922,45 +967,65 @@ def registrar_recarga(usuario_id: int, estacao_id: int, veiculo_id: int, energia
 
 
 def listar_recargas(usuario_id: int = None):
-    """Lista as recargas registradas."""
+    """Lista as recargas registradas no MySQL."""
     with conectar() as conn:
         cursor = conn.cursor(dictionary=True)
         if usuario_id:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT r.*, e.nome as estacao_nome, v.modelo as veiculo_modelo
                 FROM recargas r
                 JOIN estacoes e ON r.estacao_id = e.id
                 LEFT JOIN veiculos v ON r.veiculo_id = v.id
                 WHERE r.usuario_id = %s
                 ORDER BY r.id DESC
-            """, (usuario_id,))
+                """,
+                (usuario_id,),
+            )
         else:
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT r.*, u.nome as usuario_nome, e.nome as estacao_nome, v.modelo as veiculo_modelo
                 FROM recargas r
                 JOIN usuarios u ON r.usuario_id = u.id
                 JOIN estacoes e ON r.estacao_id = e.id
                 LEFT JOIN veiculos v ON r.veiculo_id = v.id
                 ORDER BY r.id DESC
-            """)
+                """
+            )
+        rows = [_normalizar_linha(row) for row in cursor.fetchall()]
+        cursor.close()
+        return rows
+
+
+# =====================================================================
+# FUNÇÕES DE SERVIÇOS
+# =====================================================================
+
+def listar_servicos():
+    """Lista todos os serviços e manutenções cadastrados no MySQL."""
+    with conectar() as conn:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM servicos ORDER BY id ASC")
         rows = [_normalizar_linha(row) for row in cursor.fetchall()]
         cursor.close()
         return rows
 
 
 if __name__ == "__main__":
-    print("Verificando conexao com o banco de dados MySQL online...")
+    print("Verificando e sincronizando servidores MySQL (Online e Local)...")
+    sincronizar_servidores_mysql()
     ok, info = verificar_conexao()
     print(f"[{'OK' if ok else 'ERRO'}] {info}")
 
     inicializar_banco(exportar_sql=True)
-    print(f"[OK] Script SQL sincronizado em: {SQL_SCRIPT_PATH}")
+    print(f"[OK] Scripts SQL MySQL sincronizados em:\n  - {SQL_SCRIPT_PATH}\n  - {BANCO_SQL_PATH}\n  - {EXTERNAL_SQL_SCRIPT_PATH}")
 
     with conectar() as conn:
         cursor = conn.cursor()
         for tabela in ["usuarios", "veiculos", "estacoes", "recargas", "servicos"]:
             cursor.execute(f"SELECT COUNT(*) FROM {tabela}")
             qtd = cursor.fetchone()[0]
-            print(f"- Tabela '{tabela}': {qtd} registro(s)")
+            print(f"- Tabela MySQL '{tabela}': {qtd} registro(s)")
         cursor.close()
     _db_global.desconectar()

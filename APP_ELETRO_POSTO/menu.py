@@ -360,7 +360,7 @@ def Menu(janela, abrir_login=None, abrir_cadastro=None, abrir_perfil=None, usuar
     stations_list_frame.pack(fill="x")
 
     def executar_busca():
-        """Busca estações diretamente no SQLite e atualiza os cards dinamicamente."""
+        """Busca estações diretamente no banco de dados MySQL e atualiza os cards dinamicamente."""
         cidade = cidade_var.get()
         apenas_rapida = fast_charge_var.get()
 
@@ -733,4 +733,4 @@ class EletroBelApp(ctk.CTk):
 
 if __name__ == "__main__":
     app = EletroBelApp()
-    app.mainloop()
+    app.mainloop()
