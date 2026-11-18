@@ -395,7 +395,8 @@ def _criar_tabelas_mysql(cursor):
 
 def _popular_dados_iniciais(conn, cursor):
     """Insere os dados iniciais (seed) no MySQL caso as tabelas estejam vazias."""
-    # 1. Usuários iniciais
+    # 1. Usuários iniciais (Garante sempre o usuário Administrador: admin / admin123)
+    senha_admin_hash = hash_senha("admin123")
     cursor.execute("SELECT COUNT(*) as total FROM usuarios")
     row_user = cursor.fetchone()
     total_usuarios = row_user["total"] if isinstance(row_user, dict) else (row_user[0] if row_user else 0)
@@ -407,7 +408,7 @@ def _popular_dados_iniciais(conn, cursor):
                 "Administrador EletroBel",
                 "admin@eletrobel.com",
                 "admin",
-                "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3",
+                senha_admin_hash,
                 "admin",
                 "2026-10-16 22:51:54",
             ),
@@ -428,9 +429,21 @@ def _popular_dados_iniciais(conn, cursor):
             ON DUPLICATE KEY UPDATE
                 nome = VALUES(nome),
                 email = VALUES(email),
+                senha = VALUES(senha),
                 tipo = VALUES(tipo)
             """,
             usuarios_iniciais,
+        )
+    else:
+        cursor.execute(
+            """
+            INSERT INTO usuarios (id, nome, email, usuario, senha, tipo)
+            VALUES (1, 'Administrador EletroBel', 'admin@eletrobel.com', 'admin', %s, 'admin')
+            ON DUPLICATE KEY UPDATE
+                nome = VALUES(nome),
+                tipo = 'admin'
+            """,
+            (senha_admin_hash,),
         )
 
     # 2. Estações de recarga iniciais
@@ -769,6 +782,77 @@ def autenticar_usuario(usuario: str, senha: str):
         if row:
             return _normalizar_linha(row)
         return None
+
+
+def garantir_usuario_admin(usuario: str = "admin", senha: str = "admin123"):
+    """
+    Garante que o usuário Administrador ('admin' / 'admin123') exista no banco MySQL.
+    """
+    senha_cripto = hash_senha(senha.strip())
+    try:
+        with conectar() as conn:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT id, senha FROM usuarios WHERE usuario = %s", (usuario.strip().lower(),))
+            existente = cursor.fetchone()
+            if not existente:
+                cursor.execute(
+                    """
+                    INSERT INTO usuarios (nome, email, usuario, senha, tipo)
+                    VALUES (%s, %s, %s, %s, 'admin')
+                    """,
+                    ("Administrador EletroBel", "admin@eletrobel.com", usuario.strip().lower(), senha_cripto),
+                )
+                conn.commit()
+            elif existente.get("senha") == hash_senha("123"):
+                # Atualiza a senha antiga padrão ('123') para a nova senha padrão ('admin123')
+                cursor.execute(
+                    "UPDATE usuarios SET senha = %s, tipo = 'admin' WHERE id = %s",
+                    (senha_cripto, existente["id"]),
+                )
+                conn.commit()
+            cursor.close()
+    except Exception:
+        pass
+
+
+def redefinir_senha_usuario(identificador: str, nova_senha: str):
+    """
+    Redefine a senha de um usuário a partir do nome de usuário ou e-mail cadastrado.
+    Retorna (sucesso: bool, mensagem: str).
+    """
+    ident = (identificador or "").strip().lower()
+    nova = (nova_senha or "").strip()
+
+    if not ident or not nova:
+        return False, "Informe seu usuário/e-mail e a nova senha!"
+
+    if len(nova) < 3:
+        return False, "A nova senha deve conter no mínimo 3 caracteres!"
+
+    nova_hash = hash_senha(nova)
+
+    try:
+        with conectar() as conn:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                "SELECT id, nome, usuario, email FROM usuarios WHERE LOWER(usuario) = %s OR LOWER(email) = %s",
+                (ident, ident),
+            )
+            user_row = cursor.fetchone()
+            if not user_row:
+                cursor.close()
+                return False, "Nenhum usuário encontrado com esse login ou e-mail!"
+
+            cursor.execute(
+                "UPDATE usuarios SET senha = %s WHERE id = %s",
+                (nova_hash, user_row["id"]),
+            )
+            conn.commit()
+            cursor.close()
+        atualizar_arquivo_sql()
+        return True, f"Senha do usuário '{user_row['usuario']}' redefinida com sucesso!"
+    except Exception as e:
+        return False, f"Erro ao redefinir senha: {e}"
 
 
 def listar_usuarios():

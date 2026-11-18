@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS eletrobel_posto.servicos (
 
 -- Tabela: usuarios
 INSERT INTO eletrobel_posto.usuarios (id, nome, email, usuario, senha, tipo, criado_em) VALUES
-(1, 'Administrador EletroBel', 'admin@eletrobel.com', 'admin', 'a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3', 'admin', '2026-10-16 22:51:54'),
+(1, 'Administrador EletroBel', 'admin@eletrobel.com', 'admin', '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', 'admin', '2026-10-16 22:51:54'),
 (3, 'arilson', 'arilsonvalente@gmail.com', 'arilsonvalente', '8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92', 'cliente', '2026-10-16 23:23:22')
 ON DUPLICATE KEY UPDATE nome = VALUES(nome), email = VALUES(email), usuario = VALUES(usuario), senha = VALUES(senha), tipo = VALUES(tipo), criado_em = VALUES(criado_em);
 
